@@ -1,0 +1,7 @@
+training:
+  num_epochs: 2
+  num_episodes: 2
+actor_preprocessing: {}
+actor: {}
+critic_preprocessing: {}
+critic: {}
