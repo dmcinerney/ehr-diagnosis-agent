@@ -1,7 +1,22 @@
+data:
+  path: /work/frink/mcinerney.de/datasets/mimic-iii/physionet.org/files/mimiciii/1.4/preprocessed
+  dataset: reports_and_codes3
 training:
-  num_epochs: 2
-  num_episodes: 2
-actor_preprocessing: {}
-actor: {}
-critic_preprocessing: {}
-critic: {}
+  num_epochs: 100
+  num_episodes: 3
+  batch_size: 1
+  accumulate_grad_batches: 8
+  lr: 3e-6
+  max_reports_considered: 48
+  max_trajectory_length: null
+  epsilon: .3
+  checkpoint_every: 1
+env:
+  model_name: 'google/flan-t5-xxl'
+actor:
+  model_name: emilyalsentzer/Bio_ClinicalBERT
+  embedding_batch_size: 16
+  stddev_bias: 1
+critic:
+  model_name: emilyalsentzer/Bio_ClinicalBERT
+  embedding_batch_size: 16
