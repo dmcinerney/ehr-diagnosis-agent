@@ -9,6 +9,7 @@ from .observation_embedder import ObservationEmbedder
 class Critic(nn.Module):
     def __init__(self, config):
         super().__init__()
+        self.config = config
         self.observation_embedder = ObservationEmbedder(config)
         dim = self.observation_embedder.diagnosis_encoder.config.hidden_size
         self.linear = nn.Linear(dim, 1)

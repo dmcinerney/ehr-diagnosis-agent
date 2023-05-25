@@ -3,20 +3,35 @@ data:
   dataset: reports_and_codes3
 training:
   num_epochs: 100
-  num_episodes: 3
+  num_episodes: 5
   batch_size: 1
   accumulate_grad_batches: 8
-  lr: 3e-6
-  max_reports_considered: 48
+  actor_lr: 1e-5
+  critic_lr: 1e-5
+  max_reports_considered: 32
   max_trajectory_length: null
-  epsilon: .3
   checkpoint_every: 1
+  objective_optimization: ppo_gae
+  clear_gpu: true
+ppo_gae:
+  gamma: 0.99
+  lam: 0.95
+  epsilon: .3
+  sub_epochs: 3
+  use_adv_norm: true
+  entropy_coefficient: 1
+  use_grad_clip: true
+ppo_dae:
+  epsilon: .3
 env:
   model_name: 'google/flan-t5-xxl'
+  continuous_reward: true
 actor:
   model_name: emilyalsentzer/Bio_ClinicalBERT
-  embedding_batch_size: 16
+#  model_name: roberta-base
+  embedding_batch_size: 32
   stddev_bias: 1
 critic:
   model_name: emilyalsentzer/Bio_ClinicalBERT
-  embedding_batch_size: 16
+#  model_name: roberta-base
+  embedding_batch_size: 32

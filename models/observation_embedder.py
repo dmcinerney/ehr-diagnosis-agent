@@ -31,13 +31,18 @@ class ObservationEmbedder(nn.Module):
             all_embeddings.append(embeddings)
         return torch.cat(all_embeddings, 0)
 
-    def forward(self, observation):
+    def forward(self, observation, ignore_report=False):
         reports = pd.read_csv(io.StringIO(observation['reports']), parse_dates=['date'])
         potential_diagnoses = pd.read_csv(io.StringIO(observation['potential_diagnoses'])).diagnoses.to_list()
         last_report = reports.iloc[-1].text
         diagnosis_embeddings = self.batch_embed(self.diagnosis_encoder, potential_diagnoses)
-        context_strings = [last_report]
-        context_embeddings = self.batch_embed(self.context_encoder, context_strings)
+        if ignore_report:
+            assert observation['evidence'].strip() != ''
+            context_strings = []
+            context_embeddings = None
+        else:
+            context_strings = [last_report]
+            context_embeddings = self.batch_embed(self.context_encoder, context_strings)
         if observation['evidence'].strip() != '':
             evidence = pd.read_csv(io.StringIO(observation['evidence']))
             for k in evidence.columns:
@@ -54,6 +59,8 @@ class ObservationEmbedder(nn.Module):
                 for k, v in row.items():
                     if k != 'day' and v is not None and v == v:
                         context_strings.append('{}: {} (day {})'.format(k, v, row.day))
-            context_embeddings2 = self.batch_embed(self.context_encoder, context_strings[1:])
-            context_embeddings = torch.cat([context_embeddings, context_embeddings2], 0)
+            context_strings2 = context_strings[1:] if not ignore_report else context_strings
+            context_embeddings2 = self.batch_embed(self.context_encoder, context_strings2)
+            context_embeddings = torch.cat([context_embeddings, context_embeddings2], 0) \
+                if not ignore_report else context_embeddings2
         return diagnosis_embeddings, context_embeddings, context_strings
