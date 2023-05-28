@@ -6,31 +6,46 @@ training:
   num_episodes: 5
   batch_size: 1
   accumulate_grad_batches: 8
-  actor_lr: 1e-5
-  critic_lr: 1e-5
-  max_reports_considered: 32
+  actor_lr: 1e-6
+  critic_lr: 1e-6
+  max_reports_considered: 48
   max_trajectory_length: null
   checkpoint_every: 1
-  objective_optimization: ppo_gae
+#  objective_optimization: ppo_gae
+  objective_optimization: supervised
   clear_gpu: true
 ppo_gae:
   gamma: 0.99
   lam: 0.95
   epsilon: .3
-  sub_epochs: 3
+  sub_epochs: 1
   use_adv_norm: true
-  entropy_coefficient: 1
+  entropy_coefficient: .1
+  use_grad_clip: true
+#  log_reward: false
+  log_reward: true
+supervised:
+  sub_epochs: 2
   use_grad_clip: true
 ppo_dae:
-  epsilon: .3
+  epsilon: .2
 env:
   model_name: 'google/flan-t5-xxl'
   continuous_reward: true
+  num_future_diagnoses_threshold: 4
 actor:
-  model_name: emilyalsentzer/Bio_ClinicalBERT
-#  model_name: roberta-base
-  embedding_batch_size: 32
-  stddev_bias: 1
+  type: dirichlet
+#  type: normal
+  normal_params:
+    model_name: emilyalsentzer/Bio_ClinicalBERT
+  #  model_name: roberta-base
+    embedding_batch_size: 32
+    stddev_min: 0
+    stddev_max: 1
+  dirichlet_params:
+    model_name: emilyalsentzer/Bio_ClinicalBERT
+    #  model_name: roberta-base
+    embedding_batch_size: 32
 critic:
   model_name: emilyalsentzer/Bio_ClinicalBERT
 #  model_name: roberta-base
