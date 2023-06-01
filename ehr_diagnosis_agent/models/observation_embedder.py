@@ -3,7 +3,6 @@ from transformers import AutoTokenizer, AutoModel
 import pandas as pd
 import io
 import torch
-import math
 
 
 class ObservationEmbedder(nn.Module):

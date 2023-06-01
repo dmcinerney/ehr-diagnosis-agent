@@ -1,8 +1,5 @@
 from torch import nn
 from sentence_transformers import util
-from transformers import AutoTokenizer, AutoModel
-import pandas as pd
-import io
 import torch
 from torch.distributions import Normal, Dirichlet, TransformedDistribution, ExpTransform
 from .observation_embedder import ObservationEmbedder
@@ -28,6 +25,22 @@ class Actor(nn.Module):
 
     def log_prob(self, observation, action):
         return self.get_dist(observation).log_prob(action)
+
+    def get_dist_parameter_votes_and_evidence_strings(self, observation):
+        raise NotImplementedError
+
+    def votes_to_parameters(self, *args, **kwargs):
+        raise NotImplementedError
+
+    @staticmethod
+    def parameters_to_dist(*args, **kwargs):
+        raise NotImplementedError
+
+    def get_dist_parameters(self, observation):
+        return self.votes_to_parameters(*self.get_dist_parameter_votes_and_evidence_strings(observation)[:-1])
+
+    def get_dist(self, observation):
+        return self.parameters_to_dist(*self.get_dist_parameters(observation))
 
     @staticmethod
     def get_dist_stats(dists):
@@ -65,8 +78,7 @@ class InterpretableNormalActor(Actor):
         log_stddevs = util.dot_score(diagnosis_embeddings_stddev, context_embeddings)
         return means, log_stddevs, context_strings
 
-    def get_dist_parameters(self, observation):
-        means, log_stddevs, context_strings = self.get_dist_parameter_votes_and_evidence_strings(observation)
+    def votes_to_parameters(self, means, log_stddevs):
         mean = means.mean(-1)
         mean = self.entropy_control * (mean - mean.mean()) / mean.std()
         # stddev = torch.nn.functional.softplus(log_stddevs.mean(-1)) + self.config.stddev_bias
@@ -74,8 +86,8 @@ class InterpretableNormalActor(Actor):
             self.config.stddev_max - self.config.stddev_min) * torch.nn.functional.sigmoid(log_stddevs.mean(-1))
         return mean, stddev
 
-    def get_dist(self, observation):
-        mean, stddev = self.get_dist_parameters(observation)
+    @staticmethod
+    def parameters_to_dist(mean, stddev):
         return Normal(mean, stddev)
 
     @staticmethod
@@ -104,16 +116,15 @@ class InterpretableDirichletActor(Actor):
             diagnosis_embeddings = self.concentration_weight_query(diagnosis_embeddings)
         else:
             diagnosis_embeddings = self.concentration_weight_risk(diagnosis_embeddings)
-        concentration = util.dot_score(diagnosis_embeddings, context_embeddings)
-        return concentration, context_strings
+        concentrations = util.dot_score(diagnosis_embeddings, context_embeddings)
+        return concentrations, context_strings
 
-    def get_dist_parameters(self, observation):
-        concentration, context_strings = self.get_dist_parameter_votes_and_evidence_strings(observation)
-        concentration = concentration.mean(-1)
-        return torch.nn.functional.softplus(concentration),
+    def votes_to_parameters(self, concentrations):
+        concentration = concentrations.mean(-1)
+        return torch.nn.functional.softplus(concentration) + self.config.concentration_min,
 
-    def get_dist(self, observation):
-        concentration, = self.get_dist_parameters(observation)
+    @staticmethod
+    def parameters_to_dist(concentration):
         # need to transform the dirichlet because
         return TransformedDistribution(Dirichlet(concentration), [ExpTransform().inv])
 

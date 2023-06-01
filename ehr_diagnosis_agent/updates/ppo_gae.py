@@ -8,7 +8,8 @@ from torch.distributions.categorical import Categorical
 
 # adapted from https://github.com/warrenzha/ppo-pytorch/blob/ac0be1459668e5881c20b0752dc06f6329ee6f3d/agent/ppo_continous.py#L172
 def ppo_gae_update(
-        args, replay_buffer, actor, actor_optimizer, critic, critic_optimizer, epoch, updates):
+        args, replay_buffer, actor, actor_optimizer, critic, critic_optimizer, epoch, updates, num_instances_seen,
+        num_dataset_epochs):
     with torch.no_grad():  # adv and v_target have no gradient
         advantage = []
         gae = 0
@@ -38,14 +39,19 @@ def ppo_gae_update(
         action_scores_entropy = torch.stack(
             [Categorical(logits=action).entropy() / len(action) for action in replay_buffer.actions])
     # log epoch training metrics
-    wandb.log({
+    log_dict = {
         'epoch': epoch,
         'updates': updates,
         'estimated_advantage': advantage.mean().item(),
         'estimated_value': value_target.mean().item(),
         'avg_reward': original_reward.mean().item(),
         'action_scores_normalized_entropy': action_scores_entropy.mean().item(),
-    })
+        'num_instances_seen': num_instances_seen,
+        'num_dataset_epochs': num_dataset_epochs,
+    }
+    if args.ppo_gae:
+        log_dict['avg_log_reward'] = reward.mean().item()
+    wandb.log(log_dict)
     replay_length = len(replay_buffer)
     for sub_epoch in tqdm(range(args.ppo_gae.sub_epochs), total=args.ppo_gae.sub_epochs, desc='sub-epochs'):
         # Random sampling and no repetition. 'False' indicates that training will continue even if the number of samples
@@ -99,6 +105,7 @@ def ppo_gae_update(
                 'dist_entropy': dist_entropy.detach().mean().item(),
                 'critic_loss': critic_loss.item(),
                 'ratio': ratios.detach().mean().item(),
+                'batch_advantage': advantage[index].detach().mean().item(),
             }
             log_dict.update(actor.get_dist_stats(action_dists))
             wandb.log(log_dict)

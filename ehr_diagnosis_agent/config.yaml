@@ -2,12 +2,15 @@ data:
   path: /work/frink/mcinerney.de/datasets/mimic-iii/physionet.org/files/mimiciii/1.4/preprocessed
   dataset: reports_and_codes3
 training:
+  resume_from: null
+#  resume_from: /work/frink/mcinerney.de/ehr-diagnosis-agent/ehr_diagnosis_agent/wandb/run-20230530_203831-q71s5dsd/files/ckpt_epoch=85_updates=4020.pt
   num_epochs: 100
-  num_episodes: 5
+  num_episodes: 50
   batch_size: 1
-  accumulate_grad_batches: 8
+  accumulate_grad_batches: 16
   actor_lr: 1e-6
-  critic_lr: 1e-6
+#  actor_lr: 3e-6
+  critic_lr: 3e-6
   max_reports_considered: 48
   max_trajectory_length: null
   checkpoint_every: 1
@@ -18,17 +21,18 @@ ppo_gae:
   gamma: 0.99
   lam: 0.95
   epsilon: .3
-  sub_epochs: 1
+  sub_epochs: 2
   use_adv_norm: true
-  entropy_coefficient: .1
+  entropy_coefficient: .01
   use_grad_clip: true
-#  log_reward: false
-  log_reward: true
+  log_reward: false
+#  log_reward: true
 supervised:
   sub_epochs: 2
   use_grad_clip: true
+  entropy_coefficient: 0
 ppo_dae:
-  epsilon: .2
+  epsilon: .3
 env:
   model_name: 'google/flan-t5-xxl'
   continuous_reward: true
@@ -40,12 +44,13 @@ actor:
     model_name: emilyalsentzer/Bio_ClinicalBERT
   #  model_name: roberta-base
     embedding_batch_size: 32
-    stddev_min: 0
+    stddev_min: .02
     stddev_max: 1
   dirichlet_params:
     model_name: emilyalsentzer/Bio_ClinicalBERT
     #  model_name: roberta-base
     embedding_batch_size: 32
+    concentration_min: .2
 critic:
   model_name: emilyalsentzer/Bio_ClinicalBERT
 #  model_name: roberta-base

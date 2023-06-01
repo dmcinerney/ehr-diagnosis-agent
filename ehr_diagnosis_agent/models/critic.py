@@ -1,8 +1,4 @@
 from torch import nn
-from transformers import AutoTokenizer, AutoModel
-import pandas as pd
-import io
-import torch
 from .observation_embedder import ObservationEmbedder
 
 
