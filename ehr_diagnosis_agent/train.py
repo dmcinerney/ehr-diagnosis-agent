@@ -21,9 +21,11 @@ def main():
     args = get_args('config.yaml')
     run = wandb.init(
         project="ehr-diagnosis-agent",
-        config= OmegaConf.to_container(args)
+        config=OmegaConf.to_container(args)
     )
     train_df = pd.read_csv(os.path.join(args.data.path, args.data.dataset, 'train.data'), compression='gzip')
+    if args.training.limit_train_size is not None:
+        train_df = train_df[:args.training.limit_train_size]
     train_env = gymnasium.make(
         'ehr_diagnosis_env/EHRDiagnosisEnv-v0',
         instances=train_df,
@@ -31,6 +33,7 @@ def main():
         continuous_reward=args.env.continuous_reward,
         num_future_diagnoses_threshold=args.env.num_future_diagnoses_threshold,
         progress_bar=lambda *a, **kwa: tqdm(*a, **kwa, leave=False),
+        cache_path=args.env.cache_path,
     )
     if args.actor.type == 'normal':
         actor = InterpretableNormalActor(args.actor.normal_params)
@@ -50,7 +53,7 @@ def main():
         ckpt = torch.load(args.training.resume_from)
         actor.load_state_dict(ckpt['actor'])
         actor_optimizer.load_state_dict(ckpt['actor_optimizer'])
-        if args.training.objective_optimization in ['ppo_dae', 'ppo_gae']:
+        if args.training.objective_optimization in ['ppo_dae', 'ppo_gae'] and 'critic' in ckpt.keys():
             critic.load_state_dict(ckpt['critic'])
             critic_optimizer.load_state_dict(ckpt['critic_optimizer'])
         seed_offset = ckpt['seed_offset']
@@ -74,6 +77,12 @@ def main():
         if args.training.objective_optimization in ['ppo_dae', 'ppo_gae']:
             critic.set_device('cuda')
         num_instances_seen = dataset_progress.n + dataset_length * dataset_iterations
+        if args.training.freeze_actor is not None:
+            if isinstance(args.training.freeze_actor, str):
+                freeze_actor_mode = args.training.freeze_actor
+            else:
+                freeze_actor_mode = None
+            actor.freeze(mode=freeze_actor_mode)
         if args.training.objective_optimization == 'ppo_dae':
             updates = ppo_dae_update(
                 args, replay_buffer, actor, actor_optimizer, critic, critic_optimizer, epoch, updates,

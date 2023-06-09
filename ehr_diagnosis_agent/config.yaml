@@ -2,8 +2,10 @@ data:
   path: /work/frink/mcinerney.de/datasets/mimic-iii/physionet.org/files/mimiciii/1.4/preprocessed
   dataset: reports_and_codes3
 training:
-  resume_from: null
-#  resume_from: /work/frink/mcinerney.de/ehr-diagnosis-agent/ehr_diagnosis_agent/wandb/run-20230530_203831-q71s5dsd/files/ckpt_epoch=85_updates=4020.pt
+#  limit_train_examples: null
+  limit_train_size: 3500
+#  resume_from: null
+  resume_from: /work/frink/mcinerney.de/ehr-diagnosis-agent/ehr_diagnosis_agent/wandb/run-20230604_010745-6xacw8w1/files/ckpt_epoch=8_updates=986.pt
   num_epochs: 100
   num_episodes: 50
   batch_size: 1
@@ -14,9 +16,11 @@ training:
   max_reports_considered: 48
   max_trajectory_length: null
   checkpoint_every: 1
-#  objective_optimization: ppo_gae
-  objective_optimization: supervised
+  objective_optimization: ppo_gae
+#  objective_optimization: supervised
   clear_gpu: true
+#  freeze_actor: null
+  freeze_actor: "everything_but_query"
 ppo_gae:
   gamma: 0.99
   lam: 0.95
@@ -27,6 +31,8 @@ ppo_gae:
   use_grad_clip: true
   log_reward: false
 #  log_reward: true
+#  skip_risk_prediction: false
+  skip_risk_prediction: true
 supervised:
   sub_epochs: 2
   use_grad_clip: true
@@ -37,6 +43,7 @@ env:
   model_name: 'google/flan-t5-xxl'
   continuous_reward: true
   num_future_diagnoses_threshold: 4
+  cache_path: /work/frink/mcinerney.de/ehr-diagnosis-agent/ehr_diagnosis_agent/environment_cache_1
 actor:
   type: dirichlet
 #  type: normal

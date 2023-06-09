@@ -49,14 +49,16 @@ def ppo_gae_update(
         'num_instances_seen': num_instances_seen,
         'num_dataset_epochs': num_dataset_epochs,
     }
-    if args.ppo_gae:
+    if args.ppo_gae.log_reward:
         log_dict['avg_log_reward'] = reward.mean().item()
     wandb.log(log_dict)
-    replay_length = len(replay_buffer)
+    indices = list(range(len(replay_buffer)))
+    if args.ppo_gae.skip_risk_prediction:
+        indices = [i for i in indices if not replay_buffer.observations[i]['evidence_is_retrieved']]
     for sub_epoch in tqdm(range(args.ppo_gae.sub_epochs), total=args.ppo_gae.sub_epochs, desc='sub-epochs'):
         # Random sampling and no repetition. 'False' indicates that training will continue even if the number of samples
         # in the last time is less than batch_size
-        batch_sampler = BatchSampler(SubsetRandomSampler(range(replay_length)), args.training.batch_size, False)
+        batch_sampler = BatchSampler(SubsetRandomSampler(indices), args.training.batch_size, False)
         for batch_idx, index in tqdm(enumerate(batch_sampler), total=len(batch_sampler), desc='mini-batches'):
             action_dists = [actor.get_dist(replay_buffer.observations[i]) for i in index]
             dist_entropy = actor.get_entropy(action_dists)

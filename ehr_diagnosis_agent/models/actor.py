@@ -11,6 +11,9 @@ class Actor(nn.Module):
         self.config = config
         self.observation_embedder = ObservationEmbedder(config)
 
+    def freeze(self, mode=None):
+        raise NotImplementedError
+
     def set_device(self, device):
         self.to(device)
         self.observation_embedder.set_device(device)
@@ -61,6 +64,18 @@ class InterpretableNormalActor(Actor):
         self.mean_weight_risk = nn.Linear(dim, dim, bias=False)
         self.entropy_control = nn.Parameter(torch.ones(1))
 
+    def freeze(self, mode=None):
+        if mode is None:
+            return
+        elif mode == 'everything':
+            for n, p in self.named_parameters():
+                p.requires_grad = False
+        elif mode == 'everything_but_query':
+            for n, p in self.named_parameters():
+                p.requires_grad = n.startswith('stddev_weight_query.') or n.startswith('mean_weight_query.')
+        else:
+            raise Exception
+
     def set_device(self, device):
         self.to(device)
         self.observation_embedder.set_device(device)
@@ -104,6 +119,18 @@ class InterpretableDirichletActor(Actor):
         dim = self.observation_embedder.diagnosis_encoder.config.hidden_size
         self.concentration_weight_query = nn.Linear(dim, dim, bias=False)
         self.concentration_weight_risk = nn.Linear(dim, dim, bias=False)
+
+    def freeze(self, mode=None):
+        if mode is None:
+            return
+        elif mode == 'everything':
+            for n, p in self.named_parameters():
+                p.requires_grad = False
+        elif mode == 'everything_but_query':
+            for n, p in self.named_parameters():
+                p.requires_grad = n.startswith('concentration_weight_query.')
+        else:
+            raise Exception
 
     def set_device(self, device):
         self.to(device)
