@@ -1,6 +1,7 @@
 from omegaconf import OmegaConf
 import torch
 from tqdm import trange, tqdm
+import wandb
 
 
 def get_args(config_file):
@@ -9,28 +10,31 @@ def get_args(config_file):
     return OmegaConf.merge(args_from_yaml, args_from_cli)
 
 
-def reset_env(env, seed, options, dataset_iterations, dataset_progress):
+def reset_env(env, seed, options, dataset_iterations, dataset_progress, epoch, log=True):
     new_dataset_iteration = env.num_unseen_examples() == 0
     obs, info = env.reset(seed=seed, options=options)
     if new_dataset_iteration:
         dataset_progress.reset(total=env.num_unseen_examples())
         dataset_iterations += 1
     dataset_progress.update(1)
+    if log:
+        wandb.log({'epoch': epoch, 'num_episodes_seen': dataset_progress.n + env.num_examples() * dataset_iterations,
+                   'percentage_dataset_seen': dataset_progress.n / env.num_examples() + dataset_iterations})
     return obs, info, dataset_iterations
 
 
-def collect_trajectories(args, train_env, options, actor, epoch, seed_offset, dataset_iterations, dataset_progress):
+def collect_trajectories(args, train_env, options, actor, epoch, seed_offset, dataset_iterations, dataset_progress, log=True):
     replay_buffer = ReplayBuffer()
     with torch.no_grad():
         for episode in trange(args.training.num_episodes, desc='collecting episode trajectories', leave=False):
             terminated, truncated = False, False
             obs, info, dataset_iterations = reset_env(
-                train_env, epoch * episode + seed_offset, options, dataset_iterations, dataset_progress)
+                train_env, epoch * episode + seed_offset, options, dataset_iterations, dataset_progress, epoch)
             while train_env.is_truncated(obs, info):
-                print('Dead enviornment, retrying...')
+                # dead environment, retrying...
                 seed_offset += 1
                 obs, info, dataset_iterations = reset_env(
-                    train_env, epoch * episode + seed_offset, options, dataset_iterations, dataset_progress)
+                    train_env, epoch * episode + seed_offset, options, dataset_iterations, dataset_progress, epoch)
             t = 0
             while not (terminated or truncated):
                 # sample action
@@ -43,6 +47,8 @@ def collect_trajectories(args, train_env, options, actor, epoch, seed_offset, da
                 t += 1
                 if args.training.max_trajectory_length is not None and t >= args.training.max_trajectory_length:
                     break
+            if log:
+                wandb.log({'epoch': epoch, 'num_episodes_collected': epoch * args.training.num_episodes + episode + 1})
     return replay_buffer, seed_offset, dataset_iterations
 
 

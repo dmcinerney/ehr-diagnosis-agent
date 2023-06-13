@@ -29,8 +29,7 @@ def compute_dae_loss(rewards, estimated_advantages, estimated_values, estimated_
 
 
 def ppo_dae_update(
-        args, replay_buffer, actor, actor_optimizer, critic, critic_optimizer, epoch, updates, num_instances_seen,
-        num_dataset_epochs):
+        args, replay_buffer, actor, actor_optimizer, critic, critic_optimizer, epoch, updates):
     # TODO: add gamma?
     old_critic = critic.__cls__(args.critic)
     old_critic.set_device('cuda')

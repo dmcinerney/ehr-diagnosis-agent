@@ -1,7 +1,7 @@
 from torch import nn
 from sentence_transformers import util
 import torch
-from torch.distributions import Normal, Dirichlet, TransformedDistribution, ExpTransform
+from torch.distributions import Normal, Dirichlet, TransformedDistribution, ExpTransform, Beta
 from .observation_embedder import ObservationEmbedder
 
 
@@ -166,3 +166,86 @@ class InterpretableDirichletActor(Actor):
     @staticmethod
     def get_entropy(dists):
         return torch.stack([dist.base_dist.entropy().sum() for dist in dists])
+
+
+class InterpretableBetaActor(Actor):
+    def __init__(self, config):
+        super().__init__(config)
+        dim = self.observation_embedder.diagnosis_encoder.config.hidden_size
+        self.concentration1_weight_query = nn.Linear(dim, dim, bias=False)
+        self.concentration0_weight_query = nn.Linear(dim, dim, bias=False)
+        self.concentration1_weight_risk = nn.Linear(dim, dim, bias=False)
+        self.concentration0_weight_risk = nn.Linear(dim, dim, bias=False)
+
+    def freeze(self, mode=None):
+        if mode is None:
+            return
+        elif mode == 'everything':
+            for n, p in self.named_parameters():
+                p.requires_grad = False
+        elif mode == 'everything_but_query':
+            for n, p in self.named_parameters():
+                p.requires_grad = n.startswith('prob_weight_query.')
+        else:
+            raise Exception
+
+    def set_device(self, device):
+        self.to(device)
+        self.observation_embedder.set_device(device)
+
+    def get_dist_parameter_votes_and_evidence_strings(self, observation):
+        diagnosis_embeddings, context_embeddings, context_strings = self.observation_embedder(
+            observation, ignore_report=observation['evidence_is_retrieved'])
+        if not observation['evidence_is_retrieved']:
+            diagnosis_embeddings_con1 = self.concentration1_weight_query(diagnosis_embeddings)
+            diagnosis_embeddings_con0 = self.concentration0_weight_query(diagnosis_embeddings)
+        else:
+            diagnosis_embeddings_con1 = self.concentration1_weight_risk(diagnosis_embeddings)
+            diagnosis_embeddings_con0 = self.concentration0_weight_risk(diagnosis_embeddings)
+        concentrations1 = util.dot_score(diagnosis_embeddings_con1, context_embeddings)
+        concentrations0 = util.dot_score(diagnosis_embeddings_con0, context_embeddings)
+        # under the assumption that the dot score output is naturally initially centered around 0,
+        # this changes concentrations0 to be initially centered around init_concentration0
+        concentrations0 = concentrations0 + self.config.init_concentration0
+        return concentrations1, concentrations0, context_strings
+
+    def votes_to_parameters(self, concentrations1, concentrations0):
+        concentration1 = torch.nn.functional.softplus(concentrations1.mean(-1)) + self.config.concentration_min
+        concentration0 = torch.nn.functional.softplus(concentrations0.mean(-1)) + self.config.concentration_min
+        return concentration1, concentration0
+
+    @staticmethod
+    def parameters_to_dist(concentration1, concentration0):
+        return Beta(concentration1, concentration0)
+
+    @staticmethod
+    def get_dist_stats(dists):
+        return {
+            'avg_dirichlet_concentration1': torch.stack(
+                [dist.concentration1.mean() for dist in dists]).mean(),
+            'avg_dirichlet_concentration1_stddev': torch.stack(
+                [dist.concentration1.std() for dist in dists]).mean(),
+            'avg_dirichlet_concentration0': torch.stack(
+                [dist.concentration0.mean() for dist in dists]).mean(),
+            'avg_dirichlet_concentration0_stddev': torch.stack(
+                [dist.concentration0.std() for dist in dists]).mean()}
+
+    # @staticmethod
+    # def parameters_to_dist(concentration1, concentration0):
+    #     return TransformedDistribution(Beta(concentration1, concentration0), [ExpTransform().inv])
+
+    # @staticmethod
+    # def get_dist_stats(dists):
+    #     return {
+    #         'avg_dirichlet_concentration1': torch.stack(
+    #             [dist.base_dist.concentration1.mean() for dist in dists]).mean(),
+    #         'avg_dirichlet_concentration1_stddev': torch.stack(
+    #             [dist.base_dist.concentration1.std() for dist in dists]).mean(),
+    #         'avg_dirichlet_concentration0': torch.stack(
+    #             [dist.base_dist.concentration0.mean() for dist in dists]).mean(),
+    #         'avg_dirichlet_concentration0_stddev': torch.stack(
+    #             [dist.base_dist.concentration0.std() for dist in dists]).mean()}
+
+    # @staticmethod
+    # def get_entropy(dists):
+    #     return torch.stack([dist.base_dist.entropy().sum() for dist in dists])

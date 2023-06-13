@@ -61,5 +61,5 @@ class ObservationEmbedder(nn.Module):
             context_strings2 = context_strings[1:] if not ignore_report else context_strings
             context_embeddings2 = self.batch_embed(self.context_encoder, context_strings2)
             context_embeddings = torch.cat([context_embeddings, context_embeddings2], 0) \
-                if not ignore_report else context_embeddings2
+                if context_embeddings is not None else context_embeddings2
         return diagnosis_embeddings, context_embeddings, context_strings

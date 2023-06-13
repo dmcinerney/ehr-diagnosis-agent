@@ -1,4 +1,5 @@
 import torch
+from torch.nn.utils.clip_grad import clip_grad_norm_
 import torch.nn.functional as F
 from torch.utils.data import BatchSampler, SubsetRandomSampler
 from tqdm import tqdm
@@ -9,8 +10,7 @@ from torch.distributions.categorical import Categorical
 
 
 # adapted from https://github.com/warrenzha/ppo-pytorch/blob/ac0be1459668e5881c20b0752dc06f6329ee6f3d/agent/ppo_continous.py#L172
-def supervised_update(args, replay_buffer, actor, actor_optimizer, epoch, updates, env, num_instances_seen,
-                      num_dataset_epochs):
+def supervised_update(args, replay_buffer, actor, actor_optimizer, epoch, updates, env):
     if env.fuzzy_matching_model is not None:
         env.fuzzy_matching_model.to('cuda')
     with torch.no_grad():  # adv and v_target have no gradient
@@ -23,8 +23,6 @@ def supervised_update(args, replay_buffer, actor, actor_optimizer, epoch, update
         'updates': updates,
         'avg_reward': reward.mean().item(),
         'action_scores_normalized_entropy': action_scores_entropy.mean().item(),
-        'num_instances_seen': num_instances_seen,
-        'num_dataset_epochs': num_dataset_epochs,
     })
     replay_length = len(replay_buffer)
     for sub_epoch in tqdm(range(args.supervised.sub_epochs), total=args.supervised.sub_epochs, desc='sub-epochs'):
@@ -37,14 +35,19 @@ def supervised_update(args, replay_buffer, actor, actor_optimizer, epoch, update
             actions = [action_dist.rsample() for action_dist in action_dists]
 
             # compute supervised loss
-            log_probs = []
+            supervised_loss = []
             for i, action in zip(index, actions):
                 potential_diagnoses = pd.read_csv(
                     io.StringIO(replay_buffer.observations[i]['potential_diagnoses'])).diagnoses.to_list()
                 is_match, best_match, reward = env.reward_per_item(
                     action, potential_diagnoses, replay_buffer.infos[i]['current_targets'])
-                log_probs.append(reward.sum().log())
-            supervised_loss = -torch.stack(log_probs)
+                if args.env.reward_type in ['continuous_dependent', 'ranking']:
+                    supervised_loss.append(-reward.sum().log())
+                elif args.env.reward_type in ['continuous_independent']:
+                    supervised_loss.append(torch.nn.functional.binary_cross_entropy(reward.abs(), (reward > 0).float()))
+                else:
+                    raise Exception
+            supervised_loss = torch.stack(supervised_loss)
             actor_loss = supervised_loss - args.supervised.entropy_coefficient * dist_entropy
 
             make_update = ((batch_idx + 1) % args.training.accumulate_grad_batches) == 0 or \
@@ -54,7 +57,7 @@ def supervised_update(args, replay_buffer, actor, actor_optimizer, epoch, update
             actor_loss.mean().backward()
             if make_update:
                 if args.supervised.use_grad_clip is not None:
-                    torch.nn.utils.clip_grad_norm_(actor.parameters(), 0.5)
+                    clip_grad_norm_(actor.parameters(), 0.5)
                 actor_optimizer.step()
                 actor_optimizer.zero_grad()
                 updates += 1
