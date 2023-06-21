@@ -41,6 +41,7 @@ def supervised_update(args, replay_buffer, actor, actor_optimizer, epoch, update
                     io.StringIO(replay_buffer.observations[i]['potential_diagnoses'])).diagnoses.to_list()
                 is_match, best_match, reward = env.reward_per_item(
                     action, potential_diagnoses, replay_buffer.infos[i]['current_targets'])
+                # TODO: might need to change to make this more numerically stable
                 if args.env.reward_type in ['continuous_dependent', 'ranking']:
                     supervised_loss.append(-reward.sum().log())
                 elif args.env.reward_type in ['continuous_independent']:

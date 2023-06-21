@@ -13,6 +13,8 @@ class ObservationEmbedder(nn.Module):
         self.diagnosis_encoder = AutoModel.from_pretrained(self.config.model_name)
         self.context_encoder = AutoModel.from_pretrained(self.config.model_name)
         self.tokenizer.model_max_length = self.diagnosis_encoder.config.max_position_embeddings
+        dim = self.diagnosis_encoder.config.hidden_size
+        self.diagnosis_bias_vector = nn.Parameter(torch.randn(dim)) if self.config.diagnosis_bias else None
         self.device = 'cpu'
 
     def set_device(self, device):
@@ -42,6 +44,10 @@ class ObservationEmbedder(nn.Module):
         else:
             context_strings = [last_report]
             context_embeddings = self.batch_embed(self.context_encoder, context_strings)
+        if self.diagnosis_bias_vector is not None:
+            context_strings.append("[bias vector]")
+            context_embeddings = torch.cat([context_embeddings, self.diagnosis_bias_vector.unsqueeze(0)], 0) \
+                if context_embeddings is not None else self.diagnosis_bias_vector.unsqueeze(0)
         if observation['evidence'].strip() != '':
             evidence = pd.read_csv(io.StringIO(observation['evidence']))
             for k in evidence.columns:

@@ -2,6 +2,7 @@ from omegaconf import OmegaConf
 import torch
 from tqdm import trange, tqdm
 import wandb
+import random
 
 
 def get_args(config_file):
@@ -23,7 +24,20 @@ def reset_env(env, seed, options, dataset_iterations, dataset_progress, epoch, l
     return obs, info, dataset_iterations
 
 
-def collect_trajectories(args, train_env, options, actor, epoch, seed_offset, dataset_iterations, dataset_progress, log=True):
+def sample_exploration_policy(env, actor, obs, info, mixin_expert_policy=0):
+    if mixin_expert_policy == 0 or (mixin_expert_policy != 1 and random.uniform(0, 1) < mixin_expert_policy):
+        # sample from actor policy
+        action, action_log_prob = actor(obs, return_log_prob=True)
+        action_is_expert = False
+    else:
+        # sample from "expert" policy
+        # action = 
+        action_is_expert = True
+        raise NotImplementedError
+    return action, action_log_prob, action_is_expert
+
+
+def collect_trajectories(args, train_env, options, actor, epoch, seed_offset, dataset_iterations, dataset_progress, log=True, mixin_expert_policy=0):
     replay_buffer = ReplayBuffer()
     with torch.no_grad():
         for episode in trange(args.training.num_episodes, desc='collecting episode trajectories', leave=False):
@@ -37,11 +51,11 @@ def collect_trajectories(args, train_env, options, actor, epoch, seed_offset, da
                     train_env, epoch * episode + seed_offset, options, dataset_iterations, dataset_progress, epoch)
             t = 0
             while not (terminated or truncated):
-                # sample action
-                action, action_log_prob = actor(obs, return_log_prob=True)
+                action, action_log_prob, action_is_expert = sample_exploration_policy(
+                    train_env, actor, obs, info, mixin_expert_policy=mixin_expert_policy)
                 next_obs, reward, terminated, truncated, next_info = train_env.step(action)
                 replay_buffer.append(
-                    obs, info, action, action_log_prob, reward, terminated, truncated, next_obs, next_info)
+                    obs, info, action, action_log_prob, action_is_expert, reward, terminated, truncated, next_obs, next_info)
                 obs = next_obs
                 info = next_info
                 t += 1
@@ -58,6 +72,7 @@ class ReplayBuffer:
         self.infos = []
         self.actions = []
         self.action_log_probs = []
+        self.action_is_expert = []
         self.rewards = []
         self.terminated = []
         self.truncated = []
@@ -66,12 +81,13 @@ class ReplayBuffer:
         self.episode_id = 0
         self.episode_ids = []
 
-    def append(self, observation, info, action, action_log_prob, reward, terminated, truncated, next_observation,
-               next_info):
+    def append(self, observation, info, action, action_log_prob, action_is_expert, reward, terminated, truncated,
+               next_observation, next_info):
         self.observations.append(observation)
         self.infos.append(info)
         self.actions.append(action)
         self.action_log_probs.append(action_log_prob)
+        self.action_is_expert.append(action_is_expert)
         self.rewards.append(reward)
         self.terminated.append(terminated)
         self.truncated.append(truncated)
@@ -83,10 +99,10 @@ class ReplayBuffer:
 
     def get_trajectories(self):
         trajectories = [[]]
-        for o, a, a_log_prob, r, te, tr, info, no in zip(
+        for o, a, a_log_prob, a_ie, r, te, tr, info, no in zip(
                 self.observations, self.infos, self.actions, self.action_log_probs, self.rewards, self.terminated,
                 self.truncated, self.next_observations, self.next_infos):
-            trajectories[-1].append((o, a, a_log_prob, r, te, tr, info))
+            trajectories[-1].append((o, a, a_log_prob, a_ie, r, te, tr, info))
             if te or tr:
                 trajectories[-1].append((no,))
                 trajectories.append([])

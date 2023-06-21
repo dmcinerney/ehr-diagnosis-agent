@@ -153,4 +153,3 @@ dmypy.json
 cython_debug/
 
 wandb
-.vscode

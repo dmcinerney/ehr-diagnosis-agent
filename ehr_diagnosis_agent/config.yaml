@@ -1,20 +1,22 @@
+output_dir: /scratch/mcinerney.de/ehr-diagnosis-agent-output
 data:
   path: /work/frink/mcinerney.de/datasets/mimic-iii/physionet.org/files/mimiciii/1.4/preprocessed
   dataset: reports_and_codes3
 # write_to_cache_slice: null
-write_to_cache_slice: '10000,12000'
+write_to_cache_slice: '2000,3000'
 training:
   # limit_train_examples: null
   limit_train_size: 10000
-  resume_from: null
-  # resume_from: /work/frink/mcinerney.de/ehr-diagnosis-agent/ehr_diagnosis_agent/wandb/run-20230604_010745-6xacw8w1/files/ckpt_epoch=8_updates=986.pt
-  # resume_from: /work/frink/mcinerney.de/ehr-diagnosis-agent/ehr_diagnosis_agent/wandb/run-20230612_161749-gjcsiong/files/ckpt_epoch=3_updates=141.pt
+  # resume_from: null
+  # resume_from: /scratch/mcinerney.de/ehr-diagnosis-agent-output/wandb/run-20230615_171127-e0lpllft/files/ckpt_epoch=3_updates=135.pt
+  # resume_from: /scratch/mcinerney.de/ehr-diagnosis-agent-output/wandb/run-20230615_171127-e0lpllft/files/ckpt_epoch=3_updates=135.pt
+  resume_from: /scratch/mcinerney.de/ehr-diagnosis-agent-output/wandb/run-20230616_122933-pp2dkyve/files/ckpt_epoch=17_updates=747.pt
   num_epochs: 100
-  num_episodes: 4
+  num_episodes: 32
   batch_size: 1
-  accumulate_grad_batches: 16
-  # actor_lr: 1e-6
-  actor_lr: 1e-5
+  accumulate_grad_batches: 32
+  actor_lr: 1e-6
+  # actor_lr: 1e-5
   # critic_lr: 3e-6
   critic_lr: 1e-5
   max_reports_considered: 48
@@ -49,8 +51,10 @@ ppo_dae:
 env:
   model_name: 'google/flan-t5-xxl'
   reward_type: 'continuous_independent'
+  # reward_type: 'continuous_dependent'
   num_future_diagnoses_threshold: 1
-  cache_path: /work/frink/mcinerney.de/ehr-diagnosis-agent/ehr_diagnosis_agent/.cache/environment_cache_1
+  # cache_path: /work/frink/mcinerney.de/ehr-diagnosis-agent/ehr_diagnosis_agent/.cache/environment_cache_1
+  cache_path: /work/frink/mcinerney.de/ehr-diagnosis-agent/ehr_diagnosis_agent/.cache/environment_cache_2
   top_k_evidence: 3
 actor:
   # type: normal
@@ -58,12 +62,16 @@ actor:
   type: beta
   normal_params:
     model_name: emilyalsentzer/Bio_ClinicalBERT
+    diagnosis_bias: true
+    use_attn: true
     # model_name: roberta-base
     embedding_batch_size: 32
     stddev_min: .02
     stddev_max: 1
   dirichlet_params:
     model_name: emilyalsentzer/Bio_ClinicalBERT
+    diagnosis_bias: true
+    use_attn: true
     # model_name: roberta-base
     embedding_batch_size: 32
     # concentration_min: .2
@@ -71,6 +79,8 @@ actor:
     # concentration_min: 5
   beta_params:
     model_name: emilyalsentzer/Bio_ClinicalBERT
+    diagnosis_bias: true
+    use_attn: true
     # model_name: roberta-base
     embedding_batch_size: 32
     concentration_min: 1

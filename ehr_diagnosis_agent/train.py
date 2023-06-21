@@ -33,10 +33,13 @@ def main():
     args = get_args('config.yaml')
     run = wandb.init(
         project="ehr-diagnosis-agent",
+        dir=args.output_dir,
         config=OmegaConf.to_container(args) # type: ignore
     )
     assert run is not None
+    print('loading training dataset...')
     train_df = pd.read_csv(os.path.join(args.data.path, args.data.dataset, 'train.data'), compression='gzip')
+    print('done')
     if args.training.limit_train_size is not None:
         # truncate to first instances because data indices have to be maintained to use the cache
         train_df = train_df[:args.training.limit_train_size]

@@ -9,7 +9,9 @@ from tqdm import trange, tqdm
 
 def main():
     args = get_args('config.yaml')
+    print('loading training dataset...')
     train_df = pd.read_csv(os.path.join(args.data.path, args.data.dataset, 'train.data'), compression='gzip')
+    print('done')
     train_env: EHRDiagnosisEnv = gymnasium.make(
         'ehr_diagnosis_env/EHRDiagnosisEnv-v0',
         instances=train_df,

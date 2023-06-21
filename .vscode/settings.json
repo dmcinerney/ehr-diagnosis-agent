@@ -1,0 +1,12 @@
+{
+    "python.analysis.typeCheckingMode": "basic",
+    "files.exclude": {
+        "**/.cache": true,
+        "**/wandb": true,
+        "**/__pycache__": true
+    },
+    "files.watcherExclude": {
+        "**/.cache/**": true,
+        "**/wandb/**": true
+    }
+}
