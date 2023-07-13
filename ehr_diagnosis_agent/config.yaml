@@ -3,14 +3,14 @@ data:
   path: /work/frink/mcinerney.de/datasets/mimic-iii/physionet.org/files/mimiciii/1.4/preprocessed
   dataset: reports_and_codes3
 # write_to_cache_slice: null
-write_to_cache_slice: '2000,3000'
+write_to_cache_slice: '1000'
 training:
   # limit_train_examples: null
   limit_train_size: 10000
-  # resume_from: null
+  resume_from: null
   # resume_from: /scratch/mcinerney.de/ehr-diagnosis-agent-output/wandb/run-20230615_171127-e0lpllft/files/ckpt_epoch=3_updates=135.pt
   # resume_from: /scratch/mcinerney.de/ehr-diagnosis-agent-output/wandb/run-20230615_171127-e0lpllft/files/ckpt_epoch=3_updates=135.pt
-  resume_from: /scratch/mcinerney.de/ehr-diagnosis-agent-output/wandb/run-20230616_122933-pp2dkyve/files/ckpt_epoch=17_updates=747.pt
+  # resume_from: /scratch/mcinerney.de/ehr-diagnosis-agent-output/wandb/run-20230616_122933-pp2dkyve/files/ckpt_epoch=17_updates=747.pt
   num_epochs: 100
   num_episodes: 32
   batch_size: 1
@@ -23,10 +23,17 @@ training:
   max_trajectory_length: null
   checkpoint_every: 1
   # objective_optimization: ppo_gae
-  objective_optimization: supervised
+  # objective_optimization: supervised
+  objective_optimization: mix_objectives
   clear_gpu: true
   freeze_actor: null
   # freeze_actor: "everything_but_query"
+  skip_risk_prediction: false
+  # skip_risk_prediction: true
+  skip_query_prediction: false
+  shape_reward_with_attn: false
+mix_objectives:
+  coefficient: .5 # represents the proportion of the supervised objective
 ppo_gae:
   gamma: 0.99
   lam: 0.95
@@ -38,14 +45,16 @@ ppo_gae:
   use_grad_clip: true
   log_reward: false
   # log_reward: true
-  skip_risk_prediction: false
-  # skip_risk_prediction: true
-  # only_train_critic: false
-  only_train_critic: true
+  only_train_critic: false
+  # only_train_critic: true
+  only_train_query_prediction: true
 supervised:
   sub_epochs: 1
   use_grad_clip: true
   entropy_coefficient: 0
+  only_train_risk_prediction: true
+  # only_train_risk_prediction: false
+  query_supervision_type: targets
 ppo_dae:
   epsilon: .5
 env:
@@ -53,9 +62,11 @@ env:
   reward_type: 'continuous_independent'
   # reward_type: 'continuous_dependent'
   num_future_diagnoses_threshold: 1
-  # cache_path: /work/frink/mcinerney.de/ehr-diagnosis-agent/ehr_diagnosis_agent/.cache/environment_cache_1
-  cache_path: /work/frink/mcinerney.de/ehr-diagnosis-agent/ehr_diagnosis_agent/.cache/environment_cache_2
+  cache_path: /work/frink/mcinerney.de/ehr-diagnosis-agent/ehr_diagnosis_agent/.cache/environment_cache_1
+  # cache_path: /work/frink/mcinerney.de/ehr-diagnosis-agent/ehr_diagnosis_agent/.cache/environment_cache_2
   top_k_evidence: 3
+  add_risk_factor_queries: true
+  # add_risk_factor_queries: false
 actor:
   # type: normal
   # type: dirichlet
@@ -87,5 +98,6 @@ actor:
     init_concentration0: 100
 critic:
   model_name: emilyalsentzer/Bio_ClinicalBERT
+  diagnosis_bias: true
   # model_name: roberta-base
   embedding_batch_size: 32

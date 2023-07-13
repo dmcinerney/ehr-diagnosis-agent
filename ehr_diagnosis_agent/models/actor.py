@@ -45,13 +45,18 @@ class Actor(nn.Module):
         self.to(device)
         self.observation_embedder.set_device(device)
 
-    def forward(self, observation, return_log_prob=False):
-        dist = self.get_dist(observation)
+    def forward(self, observation):
+        vote_info = self.get_dist_parameter_votes(observation)
+        param_info = self.votes_to_parameters(
+            vote_info['diagnosis_embeddings'], vote_info['context_embeddings'], vote_info['param_votes'])
+        dist = self.parameters_to_dist(*param_info['params'])
         action = dist.rsample()
-        if return_log_prob:
-            return action, dist.log_prob(action)
-        else:
-            return action
+        return {
+            'action': action,
+            'log_prob': dist.log_prob(action),
+            'context_strings': vote_info['context_strings'],
+            **param_info,
+        }
 
     def log_prob(self, observation, action):
         return self.get_dist(observation).log_prob(action)
@@ -82,9 +87,9 @@ class Actor(nn.Module):
             return {'params': attn_output.squeeze(0), 'context_attn_weights': attn_output_weights.squeeze(1)}
 
     def get_dist_parameters(self, observation):
-        return_dict = self.get_dist_parameter_votes(observation)
+        vote_info = self.get_dist_parameter_votes(observation)
         return self.votes_to_parameters(
-            return_dict['diagnosis_embeddings'], return_dict['context_embeddings'], return_dict['param_votes'])
+            vote_info['diagnosis_embeddings'], vote_info['context_embeddings'], vote_info['param_votes'])
 
     @staticmethod
     def parameters_to_dist(*args, **kwargs):

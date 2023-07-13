@@ -11,9 +11,7 @@ import torch
 import wandb
 from tqdm import trange, tqdm
 from omegaconf import OmegaConf
-from updates.ppo_dae import ppo_dae_update
-from updates.ppo_gae import ppo_gae_update
-from updates.supervised import supervised_update
+from updates import update, ppo_dae_update
 import gc
 
 
@@ -53,6 +51,7 @@ def main():
         cache_path=args.env.cache_path,
         top_k_evidence=args.env.top_k_evidence,
         verbosity=1, # don't print anything when an environment is dead
+        add_risk_factor_queries=args.env.add_risk_factor_queries,
     ) # type: ignore
     if args.env.reward_type not in recommended_reward_types[args.actor.type]:
         warnings.warn('Reward type "{}" does not align with the actor type "{}".'.format(args.env.reward_type, args.actor.type))
@@ -60,7 +59,7 @@ def main():
     actor.train()
     actor.set_device('cuda')
     actor_optimizer = torch.optim.Adam(actor.parameters(), lr=args.training.actor_lr)
-    if args.training.objective_optimization in ['ppo_dae', 'ppo_gae']:
+    if args.training.objective_optimization in ['ppo_dae', 'ppo_gae', 'mix_objectives']:
         critic = Critic(args.critic)
         critic_optimizer = torch.optim.Adam(critic.parameters(), lr=args.training.critic_lr)
     else:
@@ -92,6 +91,9 @@ def main():
         # collect trajectories via rolling out with the current policy
         if critic is not None:
             critic.set_device('cpu')
+            if args.training.clear_gpu: # only used for debugging
+                gc.collect()
+                torch.cuda.empty_cache()
         train_env.to('cuda')
         replay_buffer, seed_offset, dataset_iterations = collect_trajectories(
             args, train_env, options, actor, epoch, seed_offset, dataset_iterations, dataset_progress)
@@ -107,12 +109,10 @@ def main():
         if args.training.objective_optimization == 'ppo_dae':
             updates = ppo_dae_update(
                 args, replay_buffer, actor, actor_optimizer, critic, critic_optimizer, epoch, updates)
-        elif args.training.objective_optimization == 'ppo_gae':
-            updates = ppo_gae_update(
-                args, replay_buffer, actor, actor_optimizer, critic, critic_optimizer, epoch, updates)
-        elif args.training.objective_optimization == 'supervised':
-            updates = supervised_update(
-                args, replay_buffer, actor, actor_optimizer, epoch, updates, train_env)
+        elif args.training.objective_optimization in ['ppo_gae', 'supervised', 'mix_objectives']:
+            updates = update(
+                args, replay_buffer, actor, actor_optimizer, critic, critic_optimizer, epoch,
+                updates, train_env)
         else:
             raise Exception
         if args.training.checkpoint_every is None or ((epoch + 1) % args.training.checkpoint_every) == 0:

@@ -34,7 +34,9 @@ class ObservationEmbedder(nn.Module):
 
     def forward(self, observation, ignore_report=False):
         reports = pd.read_csv(io.StringIO(observation['reports']), parse_dates=['date'])
-        potential_diagnoses = pd.read_csv(io.StringIO(observation['potential_diagnoses'])).diagnoses.to_list()
+        potential_diagnoses = pd.read_csv(io.StringIO(
+            observation['options'])).apply(
+            lambda r: f'{r.option} ({r.type})', axis=1).to_list()
         last_report = reports.iloc[-1].text
         diagnosis_embeddings = self.batch_embed(self.diagnosis_encoder, potential_diagnoses)
         if ignore_report:
@@ -63,7 +65,8 @@ class ObservationEmbedder(nn.Module):
             for i, row in evidence.iterrows():
                 for k, v in row.items():
                     if k != 'day' and v is not None and v == v:
-                        context_strings.append('{}: {} (day {})'.format(k, v, row.day))
+                        k = eval(k)
+                        context_strings.append('{} ({}): {} (day {})'.format(k[0], k[1], v, row.day))
             context_strings2 = context_strings[1:] if not ignore_report else context_strings
             context_embeddings2 = self.batch_embed(self.context_encoder, context_strings2)
             context_embeddings = torch.cat([context_embeddings, context_embeddings2], 0) \
