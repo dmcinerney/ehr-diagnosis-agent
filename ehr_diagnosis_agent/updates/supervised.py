@@ -25,7 +25,7 @@ def supervised_batch(args, replay_buffer, actor, env, index):
                 not replay_buffer.observations[i]['evidence_is_retrieved']:
             continue
         if replay_buffer.observations[i]['evidence_is_retrieved'] or \
-                args.query_supervision_type in ['targets']:
+                args.supervised.query_supervision_type in ['targets']:
             options = pd.read_csv(
                 io.StringIO(replay_buffer.observations[i]['options']))
             options = options[options.type == 'diagnosis'].option.to_list()
@@ -41,7 +41,7 @@ def supervised_batch(args, replay_buffer, actor, env, index):
             else:
                 raise Exception
         if not replay_buffer.observations[i]['evidence_is_retrieved'] and \
-                args.query_supervision_type == 'attention':
+                args.supervised.query_supervision_type == 'attention':
             # TODO: implement this for when training query retrieval
             #   using attention
             raise NotImplementedError
@@ -53,6 +53,7 @@ def supervised_batch(args, replay_buffer, actor, env, index):
     log_dict = {
         'supervised_loss': supervised_loss.detach().mean().item(),
         'dist_entropy': dist_entropy.detach().mean().item(),
+        'actor_loss_s': actor_loss.item(),
     }
     log_dict.update(actor.get_dist_stats(action_dists))
     return actor_loss, log_dict

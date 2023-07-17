@@ -2,11 +2,15 @@ output_dir: /scratch/mcinerney.de/ehr-diagnosis-agent-output
 data:
   path: /work/frink/mcinerney.de/datasets/mimic-iii/physionet.org/files/mimiciii/1.4/preprocessed
   dataset: reports_and_codes3
+  max_reports_considered: 48
 # write_to_cache_slice: null
-write_to_cache_slice: '1000'
+write_to_cache:
+  slice: '10000,20000'
+  split: train
 training:
   # limit_train_examples: null
-  limit_train_size: 10000
+  limit_train_size: 32 #10000
+  limit_val_size: null
   resume_from: null
   # resume_from: /scratch/mcinerney.de/ehr-diagnosis-agent-output/wandb/run-20230615_171127-e0lpllft/files/ckpt_epoch=3_updates=135.pt
   # resume_from: /scratch/mcinerney.de/ehr-diagnosis-agent-output/wandb/run-20230615_171127-e0lpllft/files/ckpt_epoch=3_updates=135.pt
@@ -19,19 +23,29 @@ training:
   # actor_lr: 1e-5
   # critic_lr: 3e-6
   critic_lr: 1e-5
-  max_reports_considered: 48
   max_trajectory_length: null
   checkpoint_every: 1
   # objective_optimization: ppo_gae
-  # objective_optimization: supervised
-  objective_optimization: mix_objectives
+  objective_optimization: supervised
+  # objective_optimization: mix_objectives
   clear_gpu: true
   freeze_actor: null
   # freeze_actor: "everything_but_query"
   skip_risk_prediction: false
   # skip_risk_prediction: true
   skip_query_prediction: false
-  shape_reward_with_attn: false
+  # shape_reward_with_attn: false
+  shape_reward_with_attn: true
+  val_every: 5
+  val_max_num_episodes: 5
+  val_max_trajectory_length: null
+eval:
+  split: val
+  limit_eval_size: null
+  max_num_episodes: null
+  max_trajectory_length: null
+  # checkpoint: /scratch/mcinerney.de/ehr-diagnosis-agent-output/wandb/run-20230712_215840-ktr1ito1/files/ckpt_epoch=23_updates=753.pt
+  checkpoint: /scratch/mcinerney.de/ehr-diagnosis-agent-output/wandb/run-20230717_000206-spuih2t3/files/ckpt_epoch=9_updates=279.pt
 mix_objectives:
   coefficient: .5 # represents the proportion of the supervised objective
 ppo_gae:
@@ -58,19 +72,22 @@ supervised:
 ppo_dae:
   epsilon: .5
 env:
-  model_name: 'google/flan-t5-xxl'
+  llm_name: 'google/flan-t5-xxl'
+  fmm_name: 'all-MiniLM-L6-v2'
   reward_type: 'continuous_independent'
   # reward_type: 'continuous_dependent'
   num_future_diagnoses_threshold: 1
-  cache_path: /work/frink/mcinerney.de/ehr-diagnosis-agent/ehr_diagnosis_agent/.cache/environment_cache_1
-  # cache_path: /work/frink/mcinerney.de/ehr-diagnosis-agent/ehr_diagnosis_agent/.cache/environment_cache_2
+  train_cache_path: /work/frink/mcinerney.de/ehr-diagnosis-agent/ehr_diagnosis_agent/.cache/env_train_cache_1
+  # train_cache_path: /work/frink/mcinerney.de/ehr-diagnosis-agent/ehr_diagnosis_agent/.cache/env_train_cache_2
+  val_cache_path: /work/frink/mcinerney.de/ehr-diagnosis-agent/ehr_diagnosis_agent/.cache/env_val_cache_1
   top_k_evidence: 3
-  add_risk_factor_queries: true
+  add_risk_factor_queries: false
   # add_risk_factor_queries: false
+  limit_options_with_llm: true
 actor:
   # type: normal
-  # type: dirichlet
-  type: beta
+  type: dirichlet
+  # type: beta
   normal_params:
     model_name: emilyalsentzer/Bio_ClinicalBERT
     diagnosis_bias: true

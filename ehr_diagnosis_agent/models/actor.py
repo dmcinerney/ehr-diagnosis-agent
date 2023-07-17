@@ -241,6 +241,10 @@ class InterpretableDirichletActor(Actor):
                 [dist.base_dist.concentration.std() for dist in dists]).mean()}
 
     @staticmethod
+    def get_mean(dists):
+        return torch.stack([dist.base_dist.mean.log() for dist in dists])
+
+    @staticmethod
     def get_entropy(dists):
         return torch.stack([dist.base_dist.entropy().sum() for dist in dists])
 
@@ -319,6 +323,10 @@ class InterpretableBetaActor(Actor):
                 [dist.base_dist.concentration0.mean() for dist in dists]).mean(),
             'avg_beta_concentration0_stddev': torch.stack(
                 [dist.base_dist.concentration0.std() for dist in dists]).mean()}
+
+    @staticmethod
+    def get_mean(dists):
+        return torch.stack([dist.base_dist.mean.log() for dist in dists])
 
     @staticmethod
     def get_entropy(dists):

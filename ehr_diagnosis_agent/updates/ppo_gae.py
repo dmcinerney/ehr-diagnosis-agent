@@ -73,6 +73,7 @@ def ppo_gae_batch(args, replay_buffer, actor, critic, index, advantage, value_ta
             'ppo_objective': ppo_objective.detach().mean().item(),
             'dist_entropy': dist_entropy.detach().mean().item(),
             'ratio': ratios.detach().mean().item(),
+            'actor_loss_pg': actor_loss.item(),
         })
         log_dict.update(actor.get_dist_stats(action_dists))
     else:

@@ -8,10 +8,13 @@ from .supervised import supervised_init, supervised_batch
 from .ppo_gae import ppo_gae_init, ppo_gae_batch
 
 
-def update(args, replay_buffer, actor, actor_optimizer, critic, critic_optimizer, epoch, updates, env):
+def update(
+        args, replay_buffer, actor, actor_optimizer, critic, critic_optimizer,
+        epoch, updates, env):
     use_supervised = args.training.objective_optimization in [
         'supervised', 'mix_objectives']
-    use_ppo_gae = args.training.objective_optimization in ['ppo_gae', 'mix_objectives']
+    use_ppo_gae = args.training.objective_optimization in [
+        'ppo_gae', 'mix_objectives']
     assert use_supervised or use_ppo_gae
     log_dict = {
         'epoch': epoch,
@@ -19,14 +22,9 @@ def update(args, replay_buffer, actor, actor_optimizer, critic, critic_optimizer
     }
     if use_supervised:
         reward, action_scores_entropy = supervised_init(replay_buffer, env)
-        # log epoch training metrics
-        log_dict.update({
-            'avg_reward': reward.mean().item(),
-            'action_scores_normalized_entropy': action_scores_entropy.mean().item(),
-        })
     if use_ppo_gae:
-        advantage, value_target, reward, reward_pg, action_scores_entropy = ppo_gae_init(
-            args, replay_buffer, critic)
+        advantage, value_target, reward, reward_pg, action_scores_entropy = \
+            ppo_gae_init(args, replay_buffer, critic)
         # log epoch training metrics
         log_dict.update({
             'estimated_advantage': advantage.mean().item(),
@@ -35,23 +33,39 @@ def update(args, replay_buffer, actor, actor_optimizer, critic, critic_optimizer
         if args.ppo_gae.log_reward:
             log_dict['avg_log_reward'] = reward_pg.mean().item()
     log_dict.update({
+        'avg_reward_risk_prediction': reward[1::2].mean().item(),
         'avg_reward': reward.mean().item(),
-        'action_scores_normalized_entropy': action_scores_entropy.mean().item(),
+        'action_scores_normalized_entropy': 
+            action_scores_entropy.mean().item(),
     })
+    if args.training.shape_reward_with_attn:
+        log_dict['avg_reward_query_prediction'] = reward[::2].mean().item()
     wandb.log(log_dict)
     indices = list(range(len(replay_buffer)))
-    assert not (args.training.skip_risk_prediction and args.training.skip_query_prediction)
+    assert not (args.training.skip_risk_prediction
+        and args.training.skip_query_prediction)
     if args.training.skip_risk_prediction:
-        indices = [i for i in indices if not replay_buffer.observations[i]['evidence_is_retrieved']]
+        indices = [
+            i for i in indices
+            if not replay_buffer.observations[i]['evidence_is_retrieved']]
     if args.training.skip_query_prediction:
-        indices = [i for i in indices if replay_buffer.observations[i]['evidence_is_retrieved']]
-    for sub_epoch in tqdm(range(args.ppo_gae.sub_epochs), total=args.ppo_gae.sub_epochs, desc='sub-epochs'):
-        # Random sampling and no repetition. 'False' indicates that training will continue even if the number of samples
-        # in the last time is less than batch_size
-        batch_sampler = BatchSampler(SubsetRandomSampler(indices), args.training.batch_size, False)
-        for batch_idx, index in tqdm(enumerate(batch_sampler), total=len(batch_sampler), desc='mini-batches'):
-            make_update = ((batch_idx + 1) % args.training.accumulate_grad_batches) == 0 or \
-                (batch_idx + 1) == len(batch_sampler)
+        indices = [
+            i for i in indices
+            if replay_buffer.observations[i]['evidence_is_retrieved']]
+    for sub_epoch in tqdm(
+            range(args.ppo_gae.sub_epochs), total=args.ppo_gae.sub_epochs,
+            desc='sub-epochs'):
+        # Random sampling and no repetition. 'False' indicates that
+        # training will continue even if the number of samples in the
+        # last time is less than batch_size
+        batch_sampler = BatchSampler(
+            SubsetRandomSampler(indices), args.training.batch_size, False)
+        for batch_idx, index in tqdm(
+                enumerate(batch_sampler), total=len(batch_sampler),
+                desc='mini-batches'):
+            make_update = (
+                (batch_idx + 1) % args.training.accumulate_grad_batches) == 0 \
+                or (batch_idx + 1) == len(batch_sampler)
             update_performed = False
             log_dict = {
                 'epoch': epoch,
@@ -75,11 +89,6 @@ def update(args, replay_buffer, actor, actor_optimizer, critic, critic_optimizer
                     critic_optimizer.step()
                     critic_optimizer.zero_grad()
                     update_performed = True
-            if use_supervised and use_ppo_gae:
-                if actor_loss_s is not None:
-                    log_dict['actor_loss_s'] = actor_loss_s.item()
-                if actor_loss_pg is not None:
-                    log_dict['actor_loss_pg'] = actor_loss_pg.item()
             if use_supervised and use_ppo_gae and actor_loss_s is not None \
                     and actor_loss_pg is not None:
                 actor_loss = args.mix_objectives.coefficient * actor_loss_s \
