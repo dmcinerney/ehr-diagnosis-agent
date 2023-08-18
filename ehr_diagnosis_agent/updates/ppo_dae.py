@@ -29,7 +29,7 @@ def compute_dae_loss(rewards, estimated_advantages, estimated_values, estimated_
 
 
 def ppo_dae_update(
-        args, replay_buffer, actor, actor_optimizer, critic, critic_optimizer, epoch, updates):
+        args, replay_buffer, actor, actor_optimizer, actor_scheduler, critic, critic_optimizer, critic_scheduler, epoch, updates):
     # TODO: add gamma?
     old_critic = critic.__cls__(args.critic)
     old_critic.set_device('cuda')
@@ -64,6 +64,7 @@ def ppo_dae_update(
                 if make_update:
                     actor_optimizer.step()
                     actor_optimizer.zero_grad()
+                    actor_scheduler.steo()
                 # compute dae loss and update critic
                 with torch.no_grad():
                     estimated_last_old_value = old_critic(trajectory[t + 1][0])
@@ -73,6 +74,7 @@ def ppo_dae_update(
                 if make_update:
                     critic_optimizer.step()
                     critic_optimizer.zero_grad()
+                    critic_scheduler.step()
                     updates += 1
                 # log
                 wandb.log({

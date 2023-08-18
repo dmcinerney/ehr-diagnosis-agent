@@ -9,7 +9,8 @@ from .ppo_gae import ppo_gae_init, ppo_gae_batch
 
 
 def update(
-        args, replay_buffer, actor, actor_optimizer, critic, critic_optimizer,
+        args, replay_buffer, actor, actor_optimizer, actor_scheduler,
+        critic, critic_optimizer, critic_scheduler,
         epoch, updates, env):
     use_supervised = args.training.objective_optimization in [
         'supervised', 'mix_objectives']
@@ -88,6 +89,8 @@ def update(
                         clip_grad_norm_(critic.parameters(), 0.5)
                     critic_optimizer.step()
                     critic_optimizer.zero_grad()
+                    log_dict['critic_lr'] = critic_scheduler.get_last_lr()[0]
+                    critic_scheduler.step()
                     update_performed = True
             if use_supervised and use_ppo_gae and actor_loss_s is not None \
                     and actor_loss_pg is not None:
@@ -107,6 +110,8 @@ def update(
                         clip_grad_norm_(actor.parameters(), 0.5)
                     actor_optimizer.step()
                     actor_optimizer.zero_grad()
+                    log_dict['actor_lr'] = actor_scheduler.get_last_lr()[0]
+                    actor_scheduler.step()
                     update_performed = True
                 log_dict['actor_loss'] = actor_loss.item()
             wandb.log(log_dict)

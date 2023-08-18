@@ -14,26 +14,19 @@ def get_args(config_file):
     return OmegaConf.merge(args_from_yaml, args_from_cli)
 
 
-def sample_exploration_policy(actor, obs, mixin_expert_policy=0):
-    if mixin_expert_policy == 0 or (mixin_expert_policy != 1
-            and random.uniform(0, 1) < mixin_expert_policy):
-        # sample from actor policy
-        action_info = actor(obs)
-        action = action_info['action']
-        del action_info['action']
-        action_log_prob = action_info['log_prob']
-        del action_info['log_prob']
-        action_is_expert = False
-    else:
-        # sample from "expert" policy
-        action_is_expert = True
-        raise NotImplementedError
-    return action, action_log_prob, action_is_expert, action_info
+def sample_actor_policy(actor, obs, env):
+    # sample from actor policy
+    action_info = actor(obs)
+    action = action_info['action']
+    del action_info['action']
+    action_log_prob = action_info['log_prob']
+    del action_info['log_prob']
+    return action, action_log_prob, action_info
 
 
 def collect_episode(
         env, actor, replay_buffer, obs, info, max_trajectory_length=None,
-        mixin_expert_policy=0):
+        custom_policy=None):
     # Collect the episode trajectory given a starting state/environment.
     # If the starting state/environment is valid, return True and add
     # trajectory to the buffer, otherwise return False.
@@ -42,13 +35,14 @@ def collect_episode(
     if terminated or truncated:
         return False
     t = 0
+    sample_exploration_policy = sample_actor_policy \
+        if custom_policy is None else custom_policy
     while not (terminated or truncated):
-        action, action_log_prob, action_is_expert, action_info = \
-            sample_exploration_policy(
-                actor, obs, mixin_expert_policy=mixin_expert_policy)
+        action, action_log_prob, action_info = sample_exploration_policy(
+            actor, obs, env)
         next_obs, reward, terminated, truncated, next_info = env.step(action)
         replay_buffer.append(
-            obs, info, action, action_log_prob, action_is_expert, reward,
+            obs, info, action, action_log_prob, reward,
             terminated, truncated, next_obs, next_info, action_info)
         obs = next_obs
         info = next_info
@@ -79,7 +73,7 @@ def reset_env_train(
 
 def collect_trajectories_train(
         args, train_env, options, actor, epoch, seed_offset,
-        dataset_iterations, dataset_progress, log=True, mixin_expert_policy=0):
+        dataset_iterations, dataset_progress, log=True, custom_policy=None):
     replay_buffer = ReplayBuffer()
     with torch.no_grad():
         for episode in trange(
@@ -91,7 +85,7 @@ def collect_trajectories_train(
             while not collect_episode(
                     train_env, actor, replay_buffer, obs, info,
                     max_trajectory_length=args.training.max_trajectory_length,
-                    mixin_expert_policy=mixin_expert_policy):
+                    custom_policy=custom_policy):
                 # dead environment, retrying...
                 seed_offset += 1
                 obs, info, dataset_iterations = reset_env_train(
@@ -114,7 +108,6 @@ class ReplayBuffer:
         self.infos = []
         self.actions = []
         self.action_log_probs = []
-        self.action_is_expert = []
         self.rewards = []
         self.terminated = []
         self.truncated = []
@@ -125,14 +118,12 @@ class ReplayBuffer:
         self.episode_ids = []
 
     def append(
-            self, observation, info, action, action_log_prob, action_is_expert,
-            reward, terminated, truncated, next_observation, next_info,
-            action_info):
+            self, observation, info, action, action_log_prob, reward,
+            terminated, truncated, next_observation, next_info, action_info):
         self.observations.append(observation)
         self.infos.append(info)
         self.actions.append(action)
         self.action_log_probs.append(action_log_prob)
-        self.action_is_expert.append(action_is_expert)
         self.rewards.append(reward)
         self.terminated.append(terminated)
         self.truncated.append(truncated)

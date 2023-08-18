@@ -3,10 +3,12 @@
     "files.exclude": {
         "**/.cache": true,
         "**/wandb": true,
-        "**/__pycache__": true
+        "**/__pycache__": true,
+        "**/slurm-**": true
     },
     "files.watcherExclude": {
         "**/.cache/**": true,
-        "**/wandb/**": true
+        "**/wandb/**": true,
+        "**/slurm-**": true
     }
 }

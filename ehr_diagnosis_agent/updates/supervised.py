@@ -8,14 +8,17 @@ def supervised_init(replay_buffer, env):
     if env.fuzzy_matching_model is not None:
         env.fuzzy_matching_model.to('cuda')
     with torch.no_grad():  # adv and v_target have no gradient
-        reward = torch.tensor(replay_buffer.rewards, dtype=torch.float, device='cuda')
+        reward = torch.tensor(
+            replay_buffer.rewards, dtype=torch.float, device='cuda')
         action_scores_entropy = torch.stack(
-            [Categorical(logits=action).entropy() / len(action) for action in replay_buffer.actions])
+            [Categorical(logits=action).entropy() / len(action)
+             for action in replay_buffer.actions])
     return reward, action_scores_entropy
 
 
 def supervised_batch(args, replay_buffer, actor, env, index):
-    action_dists = [actor.get_dist(replay_buffer.observations[i]) for i in index]
+    action_dists = [actor.get_dist(replay_buffer.observations[i])
+                    for i in index]
     dist_entropy = actor.get_entropy(action_dists)
     actions = [action_dist.rsample() for action_dist in action_dists]
     # compute supervised loss
@@ -31,15 +34,7 @@ def supervised_batch(args, replay_buffer, actor, env, index):
             options = options[options.type == 'diagnosis'].option.to_list()
             is_match, best_match, reward = env.reward_per_item(
                 action, options, replay_buffer.infos[i]['current_targets'])
-            if args.env.reward_type in ['continuous_dependent', 'ranking']:
-                # TODO: might need to change to make this more numerically stable
-                supervised_loss.append(-reward.sum().log())
-            elif args.env.reward_type in ['continuous_independent']:
-                supervised_loss.append(
-                    torch.nn.functional.binary_cross_entropy(
-                    reward.abs(), (reward > 0).float()))
-            else:
-                raise Exception
+            supervised_loss.append(-reward.sum())
         if not replay_buffer.observations[i]['evidence_is_retrieved'] and \
                 args.supervised.query_supervision_type == 'attention':
             # TODO: implement this for when training query retrieval
@@ -48,7 +43,8 @@ def supervised_batch(args, replay_buffer, actor, env, index):
     if len(supervised_loss) == 0:
         return None, {}
     supervised_loss = torch.stack(supervised_loss)
-    actor_loss = supervised_loss - args.supervised.entropy_coefficient * dist_entropy
+    actor_loss = supervised_loss - \
+        args.supervised.entropy_coefficient * dist_entropy
     actor_loss = actor_loss.mean()
     log_dict = {
         'supervised_loss': supervised_loss.detach().mean().item(),

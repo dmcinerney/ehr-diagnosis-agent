@@ -17,7 +17,7 @@ def main():
     env: EHRDiagnosisEnv = gymnasium.make(
         'ehr_diagnosis_env/EHRDiagnosisEnv-v0',
         instances=df,
-        cache_path=args.env[f'{args.write_to_cache.split}_cache_path'],
+        cache_path=args.write_to_cache.cache_dir,
         llm_name_or_interface=args.env.llm_name,
         fmm_name_or_interface=args.env.fmm_name,
         reward_type=args.env.reward_type,
@@ -27,6 +27,10 @@ def main():
         verbosity=1, # don't print anything when an environment is dead
         add_risk_factor_queries=args.env.add_risk_factor_queries,
         limit_options_with_llm=args.env.limit_options_with_llm,
+        add_none_of_the_above_option=args.env.add_none_of_the_above_option,
+        alternatives_dir=args.env.alternatives_dir,
+        risk_factors_dir=args.env.risk_factors_dir,
+        true_positive_minimum=args.env.true_positive_minimum,
     ) # type: ignore
     options = {}
     if args.data.max_reports_considered is not None:
@@ -35,16 +39,28 @@ def main():
     indices = list(range(dataset_length))
     if args.write_to_cache.slice is not None:
         slc = slice(*[int(i) for i in args.write_to_cache.slice.split(',')])
-        print('Slicing dataset of length {} with {}'.format(dataset_length, str(slc)))
+        print('Slicing dataset of length {} with {}'.format(
+            dataset_length, str(slc)))
         indices = indices[slc]
     pbar = tqdm(indices, total=len(indices))
     valid_count = 0
     all_count = 0
     for i in pbar:
         obs, info = env.reset(options=dict(**options, instance_index=i))
-        valid_count +=  not env.is_truncated(obs, info)
+        terminated = env.is_terminated(obs, info)
+        truncated = env.is_truncated(obs, info)
+        valid_count += not (truncated or terminated)
         all_count += 1
-        pbar.set_postfix({'valid_instances': valid_count, 'percentage_valid': valid_count / all_count})
+        if args.write_to_cache.run_through_episode:
+            # this writes queries to cache, which is helpful if a lot or
+            # all of the queries are the same between different episodes
+            while not (truncated or terminated):
+                _, _, terminated, truncated, _ = env.step(
+                    env.action_space.sample())
+        pbar.set_postfix({
+            'valid_instances': valid_count,
+            'percentage_valid': valid_count / all_count
+        })
 
 
 if __name__ == '__main__':

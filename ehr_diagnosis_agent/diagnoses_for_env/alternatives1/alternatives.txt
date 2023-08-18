@@ -1,0 +1,2 @@
+diagnosis	alternatives
+pneumonia	pulmonary edema, cancer

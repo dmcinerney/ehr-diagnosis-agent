@@ -1,0 +1,250 @@
+Trauma
+    E000-E000 External Cause Status
+    E001-E030 Activity
+    E800-E807 Railway Accidents
+    E810-E819 Motor Vehicle Traffic Accidents
+    E820-E825 Motor Vehicle Nontraffic Accidents
+    E826-E829 Other Road Vehicle Accidents
+    E830-E838 Water Transport Accidents
+    E840-E845 Air And Space Transport Accidents
+    E846-E849 Vehicle Accidents, Not Elsewhere Classifiable
+    E850-E858 Accidental Poisoning By Drugs, Medicinal Substances, And Biologicals
+    E860-E869 Accidental Poisoning By Other Solid And Liquid Substances, Gases, And Vapors
+    E870-E876 Misadventures To Patients During Surgical And Medical Care
+    E878-E879 Surgical And Medical Procedures As The Cause Of Abnormal Reaction Of Patient Or Later Complication, Without Mention Of Misadventure At The Time Of Procedure
+    E880-E888 Accidental Falls
+    E890-E899 Accidents Caused By Fire And Flames
+    E900-E909 Accidents Due To Natural And Environmental Factors
+    E910-E915 Accidents Caused By Submersion, Suffocation, And Foreign Bodies
+    E916-E928 Other Accidents
+    E929-E929 Late Effects Of Accidental Injury
+    E930-E949 Drugs, Medicinal And Biological Substances Causing Adverse Effects In Therapeutic Use
+    E950-E959 Suicide And Self-Inflicted Injury
+    E960-E969 Homicide And Injury Purposely Inflicted By Other Persons
+    E970-E979 Legal Intervention
+    E980-E989 Injury Undetermined Whether Accidentally Or Purposely Inflicted
+    E990-E999 Injury Resulting From Operations Of War
+
+Infection
+    320 Bacterial meningitis
+    321 Meningitis due to other organisms
+    322 Meningitis of unspecified cause
+    323 Encephalitis myelitis and encephalomyelitis
+    324 Intracranial and intraspinal abscess
+    325 Phlebitis and thrombophlebitis of intracranial venous sinuses
+    326 Late effects of intracranial abscess or pyogenic infection
+    010-018 Tuberculosis
+    020-027 Zoonotic Bacterial Diseases
+    030-041 Other Bacterial Diseases
+    042-042 Human Immunodeficiency Virus
+    045-049 Poliomyelitis And Other Non-Arthropod-Borne Viral Diseases Of Central Nervous System
+    050-059 Viral Diseases Accompanied By Exanthem
+    060-066 Arthropod-Borne Viral Diseases
+    070-079 Other Diseases Due To Viruses And Chlamydiae
+    080-088 Rickettsioses And Other Arthropod-Borne Diseases
+    090-099 Syphilis And Other Venereal Diseases
+    100-104 Other Spirochetal Diseases
+    110-118 Mycoses
+    120-129 Helminthiases
+    130-136 Other Infectious And Parasitic Diseases
+
+Neoplasm
+    140-149 Malignant Neoplasm Of Lip, Oral Cavity, And Pharynx
+        140 Malignant neoplasm of lip
+        141 Malignant neoplasm of tongue
+        142 Malignant neoplasm of major salivary glands
+        143 Malignant neoplasm of gum
+        144 Malignant neoplasm of floor of mouth
+        145 Malignant neoplasm of other and unspecified parts of mouth
+        146 Malignant neoplasm of oropharynx
+        147 Malignant neoplasm of nasopharynx
+        148 Malignant neoplasm of hypopharynx
+        149 Malignant neoplasm of other and ill-defined sites within the lip oral cavity and pharynx
+    150-159 Malignant Neoplasm Of Digestive Organs And Peritoneum
+        150 Malignant neoplasm of esophagus
+        151 Malignant neoplasm of stomach
+        152 Malignant neoplasm of small intestine including duodenum
+        153 Malignant neoplasm of colon
+        154 Malignant neoplasm of rectum rectosigmoid junction and anus
+        155 Malignant neoplasm of liver and intrahepatic bile ducts
+        156 Malignant neoplasm of gallbladder and extrahepatic bile ducts
+        157 Malignant neoplasm of pancreas
+        158 Malignant neoplasm of retroperitoneum and peritoneum
+        159 Malignant neoplasm of other and ill-defined sites within the digestive organs and peritoneum
+    160-165 Malignant Neoplasm Of Respiratory And Intrathoracic Organs
+        160 Malignant neoplasm of nasal cavities middle ear and accessory sinuses
+        161 Malignant neoplasm of larynx
+        162 Malignant neoplasm of trachea bronchus and lung
+        163 Malignant neoplasm of pleura
+        164 Malignant neoplasm of thymus heart and mediastinum
+        165 Malignant neoplasm of other and ill-defined sites within the respiratory system and intrathoracic organs
+    170-176 Malignant Neoplasm Of Bone, Connective Tissue, Skin, And Breast
+        170 Malignant neoplasm of bone and articular cartilage
+        171 Malignant neoplasm of connective and other soft tissue
+        172 Malignant melanoma of skin
+        173 Oth and unspec malignant neoplasm of skin
+        174 Malignant neoplasm of female breast
+        175 Malignant neoplasm of male breast
+        176 Kaposi's sarcoma
+    179-189 Malignant Neoplasm Of Genitourinary Organs
+        179 Malignant neoplasm of uterus, part unspecified
+        180 Malignant neoplasm of cervix uteri
+        181 Malignant neoplasm of placenta
+        182 Malignant neoplasm of body of uterus
+        183 Malignant neoplasm of ovary and other uterine adnexa
+        184 Malignant neoplasm of other and unspecified female genital organs
+        185 Malignant neoplasm of prostate
+        186 Malignant neoplasm of testis
+        187 Malignant neoplasm of penis and other male genital organs
+        188 Malignant neoplasm of bladder
+        189 Malignant neoplasm of kidney and other and unspecified urinary organs
+    190-199 Malignant Neoplasm Of Other And Unspecified Sites
+        190 Malignant neoplasm of eye
+        191 Malignant neoplasm of brain
+            Specific code 191.0 Malignant neoplasm of cerebrum, except lobes and ventricles
+            Specific code 191.1 Malignant neoplasm of frontal lobe
+            Specific code 191.2 Malignant neoplasm of temporal lobe
+            Specific code 191.3 Malignant neoplasm of parietal lobe
+            Specific code 191.4 Malignant neoplasm of occipital lobe
+            Specific code 191.5 Malignant neoplasm of ventricles
+            Specific code 191.6 Malignant neoplasm of cerebellum nos
+            Specific code 191.7 Malignant neoplasm of brain stem
+            Specific code 191.8 Malignant neoplasm of other parts of brain
+            Specific code 191.9 Malignant neoplasm of brain, unspecified convert 191.9 to ICD-10-CM
+        192 Malignant neoplasm of other and unspecified parts of nervous system
+            Specific code 192.0 Malignant neoplasm of cranial nerves
+            Specific code 192.1 Malignant neoplasm of cerebral meninges
+            Specific code 192.2 Malignant neoplasm of spinal cord
+            Specific code 192.3 Malignant neoplasm of spinal meninges
+            Specific code 192.8 Malignant neoplasm of other specified sites of nervous system
+            Specific code 192.9 Malignant neoplasm of nervous system, part unspecified
+        193 Malignant neoplasm of thyroid gland
+        194 Malignant neoplasm of other endocrine glands and related structures
+        195 Malignant neoplasm of other and ill-defined sites
+        196 Secondary and unspecified malignant neoplasm of lymph nodes
+        197 Secondary malignant neoplasm of respiratory and digestive systems
+        198 Secondary malignant neoplasm of other specified sites
+            Specific code 198.3 Secondary malignant neoplasm of brain and spinal cord
+            Specific code 198.4 Secondary malignant neoplasm of other parts of nervous system
+            Specific code 198.5 Secondary malignant neoplasm of bone and bone marrow
+        199 Malignant neoplasm without specification of site
+    200-209 Malignant Neoplasm Of Lymphatic And Hematopoietic Tissue
+        200 Lymphosarcoma and reticulosarcoma and other specified malignant tumors of lymphatic tissue
+        201 Hodgkin's disease
+        202 Other malignant neoplasms of lymphoid and histiocytic tissue
+        203 Multiple myeloma and immunoproliferative neoplasms
+        204 Lymphoid leukemia
+        205 Myeloid leukemia
+        206 Monocytic leukemia
+        207 Other specified leukemia
+        208 Leukemia of unspecified cell type
+        209 Neuroendocrine tumors210-229 Benign Neoplasms
+    210-229 Benign Neoplasms
+    230-234 Carcinoma In Situ
+    235-238 Neoplasms Of Uncertain Behavior
+    239-239 Neoplasms Of Unspecified Nature
+
+Vascular
+    280 Iron deficiency anemias
+    281 Other deficiency anemias
+    282 Hereditary hemolytic anemias
+    283 Acquired hemolytic anemias
+    284 Aplastic anemia and other bone marrow failure syndromes
+    285 Other and unspecified anemias
+    286 Coagulation defects
+    287 Purpura and other hemorrhagic conditions
+    288 Diseases of white blood cells
+    289 Other diseases of blood and blood-forming organs
+    390-392 Acute Rheumatic Fever
+    393-398 Chronic Rheumatic Heart Disease
+    401-405 Hypertensive Disease
+    410-414 Ischemic Heart Disease
+    415-417 Diseases Of Pulmonary Circulation
+    420-429 Other Forms Of Heart Disease
+    430-438 Cerebrovascular Disease
+        430 Subarachnoid hemorrhage
+        431 Intracerebral hemorrhage
+        432 Other and unspecified intracranial hemorrhage
+            Specific code 432.0 Nontraumatic extradural hemorrhage
+            Specific code 432.1 Subdural hemorrhage
+            Specific code 432.9 Unspecified intracranial hemorrhage
+        433 Occlusion and stenosis of precerebral arteries
+            Non-specific code 433.0 Occlusion and stenosis of basilar artery
+                Specific code 433.00 Occlusion and stenosis of basilar artery without mention of cerebral infarction convert 433.00 to ICD-10-CM
+                Specific code 433.01 Occlusion and stenosis of basilar artery with cerebral infarction convert 433.01 to ICD-10-CM
+            Non-specific code 433.1 Occlusion and stenosis of carotid artery
+                Specific code 433.10 Occlusion and stenosis of carotid artery without mention of cerebral infarction convert 433.10 to ICD-10-CM
+                Specific code 433.11 Occlusion and stenosis of carotid artery with cerebral infarction convert 433.11 to ICD-10-CM
+            Non-specific code 433.2 Occlusion and stenosis of vertebral artery
+                Specific code 433.20 Occlusion and stenosis of vertebral artery without mention of cerebral infarction convert 433.20 to ICD-10-CM
+                Specific code 433.21 Occlusion and stenosis of vertebral artery with cerebral infarction convert 433.21 to ICD-10-CM
+            Non-specific code 433.3 Occlusion and stenosis of multiple and bilateral precerebral arteries
+                Specific code 433.30 Occlusion and stenosis of multiple and bilateral precerebral arteries without mention of cerebral infarction convert 433.30 to ICD-10-CM
+                Specific code 433.31 Occlusion and stenosis of multiple and bilateral precerebral arteries with cerebral infarction convert 433.31 to ICD-10-CM
+            Non-specific code 433.8 Occlusion and stenosis of other specified precerebral artery
+                Specific code 433.80 Occlusion and stenosis of other specified precerebral artery without mention of cerebral infarction convert 433.80 to ICD-10-CM
+                Specific code 433.81 Occlusion and stenosis of other specified precerebral artery with cerebral infarction convert 433.81 to ICD-10-CM
+            Non-specific code 433.9 Occlusion and stenosis of unspecified precerebral artery
+                Specific code 433.90 Occlusion and stenosis of unspecified precerebral artery without mention of cerebral infarction convert 433.90 to ICD-10-CM
+                Specific code 433.91 Occlusion and stenosis of unspecified precerebral artery with cerebral infarction convert 433.91 to ICD-10-CM
+        434 Occlusion of cerebral arteries
+            Non-specific code 434.0 Cerebral thrombosis
+                Specific code 434.00 Cerebral thrombosis without mention of cerebral infarction convert 434.00 to ICD-10-CM
+                Specific code 434.01 Cerebral thrombosis with cerebral infarction convert 434.01 to ICD-10-CM
+            Non-specific code 434.1 Cerebral embolism
+                Specific code 434.10 Cerebral embolism without mention of cerebral infarction convert 434.10 to ICD-10-CM
+                Specific code 434.11 Cerebral embolism with cerebral infarction convert 434.11 to ICD-10-CM
+            Non-specific code 434.9 Cerebral artery occlusion unspecified
+                Specific code 434.90 Cerebral artery occlusion, unspecified without mention of cerebral infarction convert 434.90 to ICD-10-CM
+                Specific code 434.91 Cerebral artery occlusion, unspecified with cerebral infarction convert 434.91 to ICD-10-CM
+        435 Transient cerebral ischemia
+        436 Acute, but ill-defined, cerebrovascular disease
+        437 Other and ill-defined cerebrovascular disease
+            Specific code 437.0 Cerebral atherosclerosis
+            Specific code 437.1 Other generalized ischemic cerebrovascular disease
+            Specific code 437.2 Hypertensive encephalopathy
+            Specific code 437.3 Cerebral aneurysm, nonruptured
+            Specific code 437.4 Cerebral arteritis
+            Specific code 437.5 Moyamoya disease
+            Specific code 437.6 Nonpyogenic thrombosis of intracranial venous sinus
+            Specific code 437.7 Transient global amnesia
+            Specific code 437.8 Other ill-defined cerebrovascular disease
+            Specific code 437.9 Unspecified cerebrovascular disease
+    440-449 Diseases Of Arteries, Arterioles, And Capillaries
+    451-459 Diseases Of Veins And Lymphatics, And Other Diseases Of Circulatory System
+
+Demyelinating/Autoimmune
+    340 Multiple sclerosis
+    341 Other demyelinating diseases of central nervous system
+
+Neurodegenerative
+    330 Cerebral degenerations usually manifest in childhood
+    331 Other cerebral degenerations
+        Specific code 331.0 Alzheimer's disease convert 331.0 to ICD-10-CM
+        Non-specific code 331.1 Frontotemporal dementia
+            Specific code 331.11 Pick's disease convert 331.11 to ICD-10-CM
+            Specific code 331.19 Other frontotemporal dementia convert 331.19 to ICD-10-CM
+        Specific code 331.2 Senile degeneration of brain convert 331.2 to ICD-10-CM
+        Specific code 331.3 Communicating hydrocephalus convert 331.3 to ICD-10-CM
+        Specific code 331.4 Obstructive hydrocephalus convert 331.4 to ICD-10-CM
+        Specific code 331.5 Idiopathic normal pressure hydrocephalus (INPH) convert 331.5 to ICD-10-CM
+        Specific code 331.6 Corticobasal degeneration convert 331.6 to ICD-10-CM
+        Specific code 331.7 Cerebral degeneration in diseases classified elsewhere convert 331.7 to ICD-10-CM
+        Non-specific code 331.8 Other cerebral degeneration
+            Specific code 331.81 Reye's syndrome convert 331.81 to ICD-10-CM
+            Specific code 331.82 Dementia with lewy bodies convert 331.82 to ICD-10-CM
+            Specific code 331.83 Mild cognitive impairment, so stated convert 331.83 to ICD-10-CM
+        Specific code 331.89 Other cerebral degeneration convert 331.89 to ICD-10-CM
+        Specific code 331.9 Cerebral degeneration, unspecified convert 331.9 to ICD-10-CM
+    332 Parkinson's disease
+    333 Other extrapyramidal disease and abnormal movement disorders
+    334 Spinocerebellar disease
+    343 Infantile cerebral palsy
+    345 Epilepsy and recurrent seizures
+    346 Migraine
+
+Metabolic and Endocrine
+    240-246 Disorders Of Thyroid Gland
+    249-259 Diseases Of Other Endocrine Glands
+    260-269 Nutritional Deficiencies
+    270-279 Other Metabolic Disorders And Immunity Disorders
