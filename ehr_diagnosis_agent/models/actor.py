@@ -1,14 +1,16 @@
 from torch import nn
 from sentence_transformers import util
 import torch
-from torch.distributions import Normal, Dirichlet, TransformedDistribution, ExpTransform, Beta, SigmoidTransform
+from torch.distributions import Normal, Dirichlet, TransformedDistribution, \
+    ExpTransform, Beta, SigmoidTransform
 
 from .utils import Delta
 from .observation_embedder import InterpretableObservationEmbedder, \
     BertObservationEmbedder
 
 
-# reimplementing a simple attention module because multihead attention modifies the values
+# reimplementing a simple attention module because multihead attention
+# modifies the values
 class Attention(nn.Module):
     def __init__(self, in_dim, embed_dim) -> None:
         super().__init__()
@@ -22,7 +24,8 @@ class Attention(nn.Module):
         query = self.query_weight(query)
         key = self.key_weight(key)
         # (n, l, s) = (n, l, e_in) x (n, e_in, s)
-        attn_output_weights = torch.softmax(torch.bmm(query.permute(1, 0, 2), key.permute(1, 2, 0)), -1)
+        attn_output_weights = torch.softmax(torch.bmm(
+            query.permute(1, 0, 2), key.permute(1, 2, 0)), -1)
         # (n, l, e_v) = (n, l, s) x (n, s, e_v)
         attn_output = torch.bmm(attn_output_weights, value.permute(1, 0, 2))
         # (l, n, e_v), (n, l, s)
@@ -53,7 +56,8 @@ class Actor(nn.Module):
     def forward(self, observation):
         vote_info = self.get_dist_parameter_votes(observation)
         param_info = self.votes_to_parameters(
-            vote_info['diagnosis_embeddings'], vote_info['context_embeddings'], vote_info['param_votes'])
+            vote_info['diagnosis_embeddings'], vote_info['context_embeddings'],
+            vote_info['param_votes'])
         dist = self.parameters_to_dist(*param_info['params'])
         action = dist.rsample()
         return {
@@ -68,40 +72,77 @@ class Actor(nn.Module):
 
     def get_dist_parameter_votes(self, observation):
         raise NotImplementedError
+    
+    @property
+    def has_bias(self):
+        return self.config.embedder_type == 'interpretable' and \
+            self.config.diagnosis_bias
 
-    def votes_to_parameters(self, diagnosis_embeddings, context_embeddings, param_votes):
+    def votes_to_parameters(self, diagnosis_embeddings, context_embeddings,
+                            param_votes):
         """
         diagnosis embeddings (num_diagnoses, kdim)
         context_embeddings (num_contexts, kdim)
         param_votes (num_diagnoses, num_contexts, vdim)
         """
         if self.attention is None:
-            return {'params': param_votes.mean(1)}
+            if self.config.evidence_sum:
+                params = param_votes.sum(1)
+            else:
+                if self.has_bias:
+                    params = param_votes[:, 0]
+                    if param_votes.shape[1] > 1:
+                        params = params + param_votes[:, 1:].mean(1)
+                else:
+                    params = param_votes.mean(1)
+            return {'params': params}
         else:
             kdim = diagnosis_embeddings.shape[-1]
             nd, nc, vdim = param_votes.shape
             # (1, num_diagnoses, vdim)
             diagnosis_embeddings = diagnosis_embeddings.unsqueeze(0)
             # (num_contexts, num_diagnoses, kdim)
-            context_embeddings = context_embeddings.unsqueeze(1).expand(nc, nd, kdim)
+            context_embeddings = context_embeddings.unsqueeze(1).expand(
+                nc, nd, kdim)
             # (num_contexts, num_diagnoses, vdim)
             param_votes = param_votes.transpose(0, 1)
-            # attn_output (1, num_diagnoses, vdim), attn_output_weights (num_diagnoses, 1, num_contexts)
-            attn_output, attn_output_weights = self.attention(
-                query=diagnosis_embeddings, key=context_embeddings, value=param_votes)
-            return {'params': attn_output.squeeze(0), 'context_attn_weights': attn_output_weights.squeeze(1)}
+            if self.has_bias:
+                if nc > 1:
+                    # attn_output (1, num_diagnoses, vdim), attn_output_weights
+                    #   (num_diagnoses, 1, num_contexts - 1)
+                    attn_output, attn_output_weights = self.attention(
+                        query=diagnosis_embeddings, key=context_embeddings[1:],
+                        value=param_votes[1:])
+                    # add the bias
+                    if self.config.evidence_sum:
+                        attn_output = attn_output * \
+                            context_embeddings[1:].shape[0]
+                    params = attn_output.squeeze(0) + param_votes[0]
+                else:
+                    params = param_votes[0]
+            else:
+                # attn_output (1, num_diagnoses, vdim), attn_output_weights
+                #   (num_diagnoses, 1, num_contexts)
+                attn_output, attn_output_weights = self.attention(
+                    query=diagnosis_embeddings, key=context_embeddings,
+                    value=param_votes)
+                params = attn_output.squeeze(0)
+            return {'params': params,
+                    'context_attn_weights': attn_output_weights.squeeze(1)}
 
     def get_dist_parameters(self, observation):
         vote_info = self.get_dist_parameter_votes(observation)
         return self.votes_to_parameters(
-            vote_info['diagnosis_embeddings'], vote_info['context_embeddings'], vote_info['param_votes'])
+            vote_info['diagnosis_embeddings'], vote_info['context_embeddings'],
+            vote_info['param_votes'])
 
     @staticmethod
     def parameters_to_dist(*args, **kwargs):
         raise NotImplementedError
 
     def get_dist(self, observation):
-        return self.parameters_to_dist(*self.get_dist_parameters(observation)['params'])
+        return self.parameters_to_dist(
+            *self.get_dist_parameters(observation)['params'])
 
     @staticmethod
     def get_dist_stats(dists):
@@ -142,23 +183,30 @@ class InterpretableNormalActor(Actor):
                 p.requires_grad = False
         elif mode == 'everything_but_query':
             for n, p in self.named_parameters():
-                p.requires_grad = n.startswith('stddev_weight_query.') or n.startswith('mean_weight_query.')
+                p.requires_grad = n.startswith('stddev_weight_query.') or \
+                    n.startswith('mean_weight_query.')
         else:
             raise Exception
 
     def get_dist_parameter_votes(self, observation):
-        diagnosis_embeddings, context_embeddings, context_strings, context_info = self.observation_embedder(
+        diagnosis_embeddings, context_embeddings, context_strings, \
+            context_info = self.observation_embedder(
             observation, ignore_report=observation['evidence_is_retrieved'] \
                 and not self.config.ignore_evidence,
             ignore_evidence=self.config.ignore_evidence)
         if not observation['evidence_is_retrieved']:
-            diagnosis_embeddings_stddev = self.stddev_weight_query(diagnosis_embeddings)
-            diagnosis_embeddings_mean = self.mean_weight_query(diagnosis_embeddings)
+            diagnosis_embeddings_stddev = self.stddev_weight_query(
+                diagnosis_embeddings)
+            diagnosis_embeddings_mean = self.mean_weight_query(
+                diagnosis_embeddings)
         else:
-            diagnosis_embeddings_stddev = self.stddev_weight_query(diagnosis_embeddings)
-            diagnosis_embeddings_mean = self.mean_weight_query(diagnosis_embeddings)
+            diagnosis_embeddings_stddev = self.stddev_weight_query(
+                diagnosis_embeddings)
+            diagnosis_embeddings_mean = self.mean_weight_query(
+                diagnosis_embeddings)
         means = util.dot_score(diagnosis_embeddings_mean, context_embeddings)
-        log_stddevs = util.dot_score(diagnosis_embeddings_stddev, context_embeddings)
+        log_stddevs = util.dot_score(
+            diagnosis_embeddings_stddev, context_embeddings)
         param_votes = torch.stack([means, log_stddevs], 2)
         return {
             'param_votes': param_votes,
@@ -168,13 +216,18 @@ class InterpretableNormalActor(Actor):
             'context_info': context_info,
         }
 
-    def votes_to_parameters(self, diagnosis_embeddings, context_embeddings, param_votes):
-        return_dict = super().votes_to_parameters(diagnosis_embeddings, context_embeddings, param_votes)
-        mean, log_stddev = return_dict['params'][:, 0], return_dict['params'][:, 0]
+    def votes_to_parameters(self, diagnosis_embeddings, context_embeddings,
+                            param_votes):
+        return_dict = super().votes_to_parameters(
+            diagnosis_embeddings, context_embeddings, param_votes)
+        mean = return_dict['params'][:, 0]
+        log_stddev = return_dict['params'][:, 1]
         mean = self.entropy_control * (mean - mean.mean()) / mean.std()
-        # stddev = torch.nn.functional.softplus(log_stddevs.mean(-1)) + self.config.stddev_bias
+        # stddev = torch.nn.functional.softplus(log_stddevs.mean(-1)) + \
+        #     self.config.stddev_bias
         stddev = self.config.stddev_min + (
-            self.config.stddev_max - self.config.stddev_min) * torch.nn.functional.sigmoid(log_stddev)
+            self.config.stddev_max - self.config.stddev_min
+            ) * torch.nn.functional.sigmoid(log_stddev)
         return_dict['params'] = (mean, stddev)
         return return_dict
 

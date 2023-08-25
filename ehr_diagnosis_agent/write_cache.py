@@ -28,9 +28,9 @@ def main():
         add_risk_factor_queries=args.env.add_risk_factor_queries,
         limit_options_with_llm=args.env.limit_options_with_llm,
         add_none_of_the_above_option=args.env.add_none_of_the_above_option,
-        alternatives_dir=args.env.alternatives_dir,
-        risk_factors_dir=args.env.risk_factors_dir,
         true_positive_minimum=args.env.true_positive_minimum,
+        use_confident_diagnosis_mapping=
+            args.env.use_confident_diagnosis_mapping,
     ) # type: ignore
     options = {}
     if args.data.max_reports_considered is not None:

@@ -61,6 +61,7 @@ class ObservationEmbedder(nn.Module):
                     new_evidence_list.append(None)
             evidence[k] = new_evidence_list[::-1]
         evidence_strings = []
+        metadata = []
         for i, row in evidence.iterrows():
             for k, v in row.items():
                 if self.config.ignore_no_evidence_found and v == 'no evidence found':
@@ -68,7 +69,8 @@ class ObservationEmbedder(nn.Module):
                 if k != 'day' and v is not None and v == v:
                     k = eval(k)
                     evidence_strings.append('{} ({}): {} (day {})'.format(k[0], k[1], v, row.day))
-        return evidence_strings
+                    metadata.append({'report_idx': i})
+        return evidence_strings, metadata
 
 
 class InterpretableObservationEmbedder(ObservationEmbedder):
@@ -86,28 +88,36 @@ class InterpretableObservationEmbedder(ObservationEmbedder):
             lambda r: f'{r.option} ({r.type})', axis=1).to_list()
         last_report = reports.iloc[-1].text
         diagnosis_embeddings = self.batch_embed(self.diagnosis_encoder, potential_diagnoses)
-        if ignore_report:
-            assert observation['evidence'].strip() != ''
-            context_strings = []
-            context_info = []
-            context_embeddings = None
-        else:
-            context_strings = [last_report]
-            context_info = ['report']
-            context_embeddings = self.batch_embed(self.context_encoder, context_strings)
+        context_strings = []
+        context_info = []
+        context_embeddings = []
         if self.diagnosis_bias_vector is not None:
-            context_strings.append("[bias vector]")
+            context_strings.append('[bias vector]')
             context_info.append('bias')
-            context_embeddings = torch.cat([context_embeddings, self.diagnosis_bias_vector.unsqueeze(0)], 0) \
-                if context_embeddings is not None else self.diagnosis_bias_vector.unsqueeze(0)
+            context_embeddings.append(self.diagnosis_bias_vector.unsqueeze(0))
+        if ignore_report:
+            assert observation['evidence'].strip() != '' or \
+                self.diagnosis_bias_vector is not None
+        else:
+            context_strings.append(last_report)
+            context_info.append('report')
+            context_embeddings.append(
+                self.batch_embed(self.context_encoder, context_strings))
         if not ignore_evidence and observation['evidence'].strip() != '':
-            evidence_strings = self.get_evidence_strings(observation)
-            context_strings += evidence_strings
-            context_info += ['evidence'] * len(evidence_strings)
-            evidence_embeddings = self.batch_embed(self.context_encoder, evidence_strings)
-            context_embeddings = torch.cat([context_embeddings, evidence_embeddings], 0) \
-                if context_embeddings is not None else evidence_embeddings
-        return diagnosis_embeddings, context_embeddings, context_strings, context_info
+            evidence_strings, evidence_metadata = self.get_evidence_strings(
+                observation)
+            if len(evidence_strings) > 0:
+                context_strings += evidence_strings
+                context_info += [
+                    'evidence (report {})'.format(x['report_idx'] + 1)
+                    for x in evidence_metadata]
+                evidence_embeddings = self.batch_embed(
+                    self.context_encoder, evidence_strings)
+                context_embeddings.append(evidence_embeddings)
+        context_embeddings = torch.cat(context_embeddings) \
+            if len(context_embeddings) > 1 else context_embeddings[0]
+        return diagnosis_embeddings, context_embeddings, context_strings, \
+            context_info
 
 
 class BertObservationEmbedder(ObservationEmbedder):
@@ -120,17 +130,23 @@ class BertObservationEmbedder(ObservationEmbedder):
         last_report = reports.iloc[-1].text
         diagnosis_embeddings = self.batch_embed(
             self.diagnosis_encoder, potential_diagnoses)
+        context_strings = []
+        context_info = []
         if ignore_report:
-            assert observation['evidence'].strip() != ''
-            context_strings = []
-            context_info = []
+            assert observation['evidence'].strip() != '' or \
+                self.diagnosis_bias_vector is not None
         else:
-            context_strings = [last_report]
-            context_info = ['report']
+            context_strings.append(last_report)
+            context_info.append('report')
         if not ignore_evidence and observation['evidence'].strip() != '':
-            evidence_strings = self.get_evidence_strings(observation)
-            context_strings += evidence_strings
-            context_info += ['evidence'] * len(evidence_strings)
+            evidence_strings, evidence_metadata = self.get_evidence_strings(
+                observation)
+            if len(evidence_strings) > 0:
+                context_strings += evidence_strings
+                context_info += [
+                    'evidence (report {})'.format(x['report_idx'])
+                    for x in evidence_metadata]
         context_embeddings = self.batch_embed(
             self.context_encoder, ['\n\n'.join(context_strings)])
-        return diagnosis_embeddings, context_embeddings, context_strings, context_info
+        return diagnosis_embeddings, context_embeddings, context_strings, \
+            context_info

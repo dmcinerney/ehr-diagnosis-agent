@@ -7,7 +7,7 @@ from torch.distributions.categorical import Categorical
 def supervised_init(replay_buffer, env):
     if env.fuzzy_matching_model is not None:
         env.fuzzy_matching_model.to('cuda')
-    with torch.no_grad():  # adv and v_target have no gradient
+    with torch.no_grad(): # adv and v_target have no gradient
         reward = torch.tensor(
             replay_buffer.rewards, dtype=torch.float, device='cuda')
         action_scores_entropy = torch.stack(
