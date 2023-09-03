@@ -14,6 +14,21 @@ def get_args(config_file):
     return OmegaConf.merge(args_from_yaml, args_from_cli)
 
 
+class CustomPolicy:
+    def __init__(self, random_query_policy, random_rp_policy):
+        self.random_query_policy = random_query_policy
+        self.random_rp_policy = random_rp_policy
+    def __call__(self, actor, obs, env):
+        device = next(iter(actor.parameters())).device
+        if self.random_query_policy and not obs['evidence_is_retrieved']:
+            return torch.tensor(env.action_space.sample(), device=device), \
+                torch.tensor(0, device=device), {}
+        if self.random_rp_policy and obs['evidence_is_retrieved']:
+            return torch.tensor(env.action_space.sample(), device=device), \
+                torch.tensor(0, device=device), {}
+        return sample_actor_policy(actor, obs, env)
+
+
 def sample_actor_policy(actor, obs, env):
     # sample from actor policy
     action_info = actor(obs)
@@ -71,10 +86,23 @@ def reset_env_train(
     return obs, info, dataset_iterations
 
 
+def reset_at_random_idx(env, info, seed=None, options=None):
+    new_options = {
+        'start_report_index': random.randint(
+            info['current_report'],
+            info['current_report'] + info['max_timesteps'] // 2 - 1),
+        'instance_index': info['instance_index'],
+    }
+    if options is not None:
+        new_options.update(options)
+    return env.reset(seed=seed, options=new_options)
+
+
 def collect_trajectories_train(
         args, train_env, options, actor, epoch, seed_offset,
         dataset_iterations, dataset_progress, log=True, custom_policy=None):
     replay_buffer = ReplayBuffer()
+    actor.train()
     with torch.no_grad():
         for episode in trange(
                 args.training.num_episodes,
@@ -82,15 +110,21 @@ def collect_trajectories_train(
             obs, info, dataset_iterations = reset_env_train(
                 train_env, epoch * episode + seed_offset, options,
                 dataset_iterations, dataset_progress, epoch)
-            while not collect_episode(
-                    train_env, actor, replay_buffer, obs, info,
-                    max_trajectory_length=args.training.max_trajectory_length,
-                    custom_policy=custom_policy):
+            while train_env.is_terminated(obs, info) or \
+                    train_env.is_truncated(obs, info):
                 # dead environment, retrying...
                 seed_offset += 1
                 obs, info, dataset_iterations = reset_env_train(
                     train_env, epoch * episode + seed_offset, options,
                     dataset_iterations, dataset_progress, epoch)
+            if args.training.use_random_start_idx:
+                obs, info = reset_at_random_idx(
+                    train_env, info, seed=epoch * episode + seed_offset,
+                    options=options)
+            assert collect_episode(
+                train_env, actor, replay_buffer, obs, info,
+                max_trajectory_length=args.training.max_trajectory_length,
+                custom_policy=custom_policy)
             if log:
                 wandb.log({
                     'epoch': epoch,
@@ -152,6 +186,10 @@ class ReplayBuffer:
         return len(self.observations)
 
     def num_episodes(self):
+        return self.episode_id + int(
+            not (self.terminated[-1] or self.truncated[-1]))
+
+    def num_completed_episodes(self):
         return self.episode_id
 
     def shape_reward_with_attn(self):

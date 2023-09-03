@@ -3,7 +3,6 @@ from sentence_transformers import util
 import torch
 from torch.distributions import Normal, Dirichlet, TransformedDistribution, \
     ExpTransform, Beta, SigmoidTransform
-
 from .utils import Delta
 from .observation_embedder import InterpretableObservationEmbedder, \
     BertObservationEmbedder
@@ -39,8 +38,11 @@ class Actor(nn.Module):
         self.observation_embedder = InterpretableObservationEmbedder(config) \
             if config.embedder_type == 'interpretable' else \
             BertObservationEmbedder(config)
-        dim = self.observation_embedder.diagnosis_encoder.config.hidden_size
+        dim = self.observation_embedder.context_encoder.config.hidden_size
         self.attention = Attention(dim, dim) if self.config.use_attn else None
+        if self.has_bias and self.config.static_diagnoses is not None:
+            self.static_bias = nn.Embedding(
+                len(self.config.static_diagnoses), self.param_vec_size)
 
     @property
     def param_vec_size(self):
@@ -53,11 +55,20 @@ class Actor(nn.Module):
         self.to(device)
         self.observation_embedder.set_device(device)
 
+    def get_static_bias(self, vote_info):
+        if self.has_bias and self.config.static_diagnoses is not None:
+            return self.static_bias(
+                torch.tensor(
+                    [self.observation_embedder.diagnosis_mapping[x]
+                     for x in vote_info['diagnosis_strings']],
+                    device=self.static_bias.weight.device))
+
     def forward(self, observation):
         vote_info = self.get_dist_parameter_votes(observation)
         param_info = self.votes_to_parameters(
             vote_info['diagnosis_embeddings'], vote_info['context_embeddings'],
-            vote_info['param_votes'])
+            vote_info['param_votes'],
+            static_bias=self.get_static_bias(vote_info))
         dist = self.parameters_to_dist(*param_info['params'])
         action = dist.rsample()
         return {
@@ -72,29 +83,28 @@ class Actor(nn.Module):
 
     def get_dist_parameter_votes(self, observation):
         raise NotImplementedError
-    
+
     @property
     def has_bias(self):
-        return self.config.embedder_type == 'interpretable' and \
-            self.config.diagnosis_bias
+        return self.config.diagnosis_bias
 
     def votes_to_parameters(self, diagnosis_embeddings, context_embeddings,
-                            param_votes):
+                            param_votes, static_bias=None):
         """
         diagnosis embeddings (num_diagnoses, kdim)
         context_embeddings (num_contexts, kdim)
         param_votes (num_diagnoses, num_contexts, vdim)
         """
         if self.attention is None:
-            if self.config.evidence_sum:
-                params = param_votes.sum(1)
+            if self.has_bias and self.config.separate_bias and \
+                    self.config.static_diagnoses is None:
+                params = param_votes[:, 0]
+                if param_votes.shape[1] > 1:
+                    params = params + param_votes[:, 1:].mean(1)
             else:
-                if self.has_bias:
-                    params = param_votes[:, 0]
-                    if param_votes.shape[1] > 1:
-                        params = params + param_votes[:, 1:].mean(1)
-                else:
-                    params = param_votes.mean(1)
+                params = param_votes.mean(1)
+            if static_bias is not None:
+                params = params + static_bias
             return {'params': params}
         else:
             kdim = diagnosis_embeddings.shape[-1]
@@ -106,17 +116,17 @@ class Actor(nn.Module):
                 nc, nd, kdim)
             # (num_contexts, num_diagnoses, vdim)
             param_votes = param_votes.transpose(0, 1)
-            if self.has_bias:
+            if self.has_bias and self.config.separate_bias and  \
+                    self.config.static_diagnoses is None:
                 if nc > 1:
-                    # attn_output (1, num_diagnoses, vdim), attn_output_weights
+                    # attn_output (1, num_diagnoses, vdim),
+                    #   attn_output_weights
                     #   (num_diagnoses, 1, num_contexts - 1)
                     attn_output, attn_output_weights = self.attention(
-                        query=diagnosis_embeddings, key=context_embeddings[1:],
+                        query=diagnosis_embeddings,
+                        key=context_embeddings[1:],
                         value=param_votes[1:])
                     # add the bias
-                    if self.config.evidence_sum:
-                        attn_output = attn_output * \
-                            context_embeddings[1:].shape[0]
                     params = attn_output.squeeze(0) + param_votes[0]
                 else:
                     params = param_votes[0]
@@ -127,6 +137,8 @@ class Actor(nn.Module):
                     query=diagnosis_embeddings, key=context_embeddings,
                     value=param_votes)
                 params = attn_output.squeeze(0)
+            if static_bias is not None:
+                params = params + static_bias
             return {'params': params,
                     'context_attn_weights': attn_output_weights.squeeze(1)}
 
@@ -134,7 +146,8 @@ class Actor(nn.Module):
         vote_info = self.get_dist_parameter_votes(observation)
         return self.votes_to_parameters(
             vote_info['diagnosis_embeddings'], vote_info['context_embeddings'],
-            vote_info['param_votes'])
+            vote_info['param_votes'],
+            static_bias=self.get_static_bias(vote_info))
 
     @staticmethod
     def parameters_to_dist(*args, **kwargs):
@@ -164,7 +177,7 @@ class Actor(nn.Module):
 class InterpretableNormalActor(Actor):
     def __init__(self, config):
         super().__init__(config)
-        dim = self.observation_embedder.diagnosis_encoder.config.hidden_size
+        dim = self.observation_embedder.context_encoder.config.hidden_size
         self.stddev_weight_query = nn.Linear(dim, dim, bias=False)
         self.mean_weight_query = nn.Linear(dim, dim, bias=False)
         self.stddev_weight_risk = nn.Linear(dim, dim, bias=False)
@@ -189,8 +202,8 @@ class InterpretableNormalActor(Actor):
             raise Exception
 
     def get_dist_parameter_votes(self, observation):
-        diagnosis_embeddings, context_embeddings, context_strings, \
-            context_info = self.observation_embedder(
+        diagnosis_embeddings, context_embeddings, diagnosis_strings, \
+            context_strings, context_info = self.observation_embedder(
             observation, ignore_report=observation['evidence_is_retrieved'] \
                 and not self.config.ignore_evidence,
             ignore_evidence=self.config.ignore_evidence)
@@ -212,14 +225,15 @@ class InterpretableNormalActor(Actor):
             'param_votes': param_votes,
             'context_strings': context_strings,
             'context_embeddings': context_embeddings,
+            'diagnosis_strings': diagnosis_strings,
             'diagnosis_embeddings': diagnosis_embeddings,
             'context_info': context_info,
         }
 
     def votes_to_parameters(self, diagnosis_embeddings, context_embeddings,
-                            param_votes):
+                            param_votes, static_bias=None):
         return_dict = super().votes_to_parameters(
-            diagnosis_embeddings, context_embeddings, param_votes)
+            diagnosis_embeddings, context_embeddings, param_votes, static_bias=static_bias)
         mean = return_dict['params'][:, 0]
         log_stddev = return_dict['params'][:, 1]
         mean = self.entropy_control * (mean - mean.mean()) / mean.std()
@@ -246,7 +260,7 @@ class InterpretableNormalActor(Actor):
 class InterpretableDirichletActor(Actor):
     def __init__(self, config):
         super().__init__(config)
-        dim = self.observation_embedder.diagnosis_encoder.config.hidden_size
+        dim = self.observation_embedder.context_encoder.config.hidden_size
         self.concentration_weight_query = nn.Linear(dim, dim, bias=False)
         self.concentration_weight_risk = nn.Linear(dim, dim, bias=False)
 
@@ -267,7 +281,8 @@ class InterpretableDirichletActor(Actor):
             raise Exception
 
     def get_dist_parameter_votes(self, observation):
-        diagnosis_embeddings, context_embeddings, context_strings, context_info = self.observation_embedder(
+        diagnosis_embeddings, context_embeddings, diagnosis_strings, \
+            context_strings, context_info = self.observation_embedder(
             observation, ignore_report=observation['evidence_is_retrieved'] \
                 and not self.config.ignore_evidence,
             ignore_evidence=self.config.ignore_evidence)
@@ -281,12 +296,13 @@ class InterpretableDirichletActor(Actor):
             'param_votes': param_votes,
             'context_strings': context_strings,
             'context_embeddings': context_embeddings,
+            'diagnosis_strings': diagnosis_strings,
             'diagnosis_embeddings': diagnosis_embeddings,
             'context_info': context_info,
         }
 
-    def votes_to_parameters(self, diagnosis_embeddings, context_embeddings, param_votes):
-        return_dict = super().votes_to_parameters(diagnosis_embeddings, context_embeddings, param_votes)
+    def votes_to_parameters(self, diagnosis_embeddings, context_embeddings, param_votes, static_bias=None):
+        return_dict = super().votes_to_parameters(diagnosis_embeddings, context_embeddings, param_votes, static_bias=static_bias)
         concentration = torch.nn.functional.softplus(return_dict['params'][:, 0]) + self.config.concentration_min
         return_dict['params'] = (concentration,)
         return return_dict
@@ -316,7 +332,7 @@ class InterpretableDirichletActor(Actor):
 class InterpretableBetaActor(Actor):
     def __init__(self, config):
         super().__init__(config)
-        dim = self.observation_embedder.diagnosis_encoder.config.hidden_size
+        dim = self.observation_embedder.context_encoder.config.hidden_size
         self.concentration1_weight_query = nn.Linear(dim, dim, bias=False)
         self.concentration0_weight_query = nn.Linear(dim, dim, bias=False)
         self.concentration1_weight_risk = nn.Linear(dim, dim, bias=False)
@@ -341,7 +357,8 @@ class InterpretableBetaActor(Actor):
             raise Exception
 
     def get_dist_parameter_votes(self, observation):
-        diagnosis_embeddings, context_embeddings, context_strings, context_info = self.observation_embedder(
+        diagnosis_embeddings, context_embeddings, diagnosis_strings, \
+            context_strings, context_info = self.observation_embedder(
             observation, ignore_report=observation['evidence_is_retrieved'] \
                 and not self.config.ignore_evidence,
             ignore_evidence=self.config.ignore_evidence)
@@ -361,12 +378,13 @@ class InterpretableBetaActor(Actor):
             'param_votes': param_votes,
             'context_strings': context_strings,
             'context_embeddings': context_embeddings,
+            'diagnosis_strings': diagnosis_strings,
             'diagnosis_embeddings': diagnosis_embeddings,
             'context_info': context_info,
         }
 
-    def votes_to_parameters(self, diagnosis_embeddings, context_embeddings, param_votes):
-        return_dict = super().votes_to_parameters(diagnosis_embeddings, context_embeddings, param_votes)
+    def votes_to_parameters(self, diagnosis_embeddings, context_embeddings, param_votes, static_bias=None):
+        return_dict = super().votes_to_parameters(diagnosis_embeddings, context_embeddings, param_votes, static_bias=static_bias)
         concentration1, concentration0 = return_dict['params'][:, 0], return_dict['params'][:, 1]
         concentration1 = torch.nn.functional.softplus(concentration1) + self.config.concentration_min
         concentration0 = torch.nn.functional.softplus(concentration0) + self.config.concentration_min
@@ -401,7 +419,7 @@ class InterpretableBetaActor(Actor):
 class InterpretableDeltaActor(Actor):
     def __init__(self, config):
         super().__init__(config)
-        dim = self.observation_embedder.diagnosis_encoder.config.hidden_size
+        dim = self.observation_embedder.context_encoder.config.hidden_size
         self.weight_query = nn.Linear(dim, dim, bias=False)
         self.weight_risk = nn.Linear(dim, dim, bias=False)
 
@@ -422,7 +440,8 @@ class InterpretableDeltaActor(Actor):
             raise Exception
 
     def get_dist_parameter_votes(self, observation):
-        diagnosis_embeddings, context_embeddings, context_strings, context_info = self.observation_embedder(
+        diagnosis_embeddings, context_embeddings, diagnosis_strings, \
+            context_strings, context_info = self.observation_embedder(
             observation, ignore_report=observation['evidence_is_retrieved'] \
                 and not self.config.ignore_evidence,
             ignore_evidence=self.config.ignore_evidence)
@@ -436,12 +455,13 @@ class InterpretableDeltaActor(Actor):
             'param_votes': param_votes,
             'context_strings': context_strings,
             'context_embeddings': context_embeddings,
+            'diagnosis_strings': diagnosis_strings,
             'diagnosis_embeddings': diagnosis_embeddings,
             'context_info': context_info,
         }
 
-    def votes_to_parameters(self, diagnosis_embeddings, context_embeddings, param_votes):
-        return_dict = super().votes_to_parameters(diagnosis_embeddings, context_embeddings, param_votes)
+    def votes_to_parameters(self, diagnosis_embeddings, context_embeddings, param_votes, static_bias=None):
+        return_dict = super().votes_to_parameters(diagnosis_embeddings, context_embeddings, param_votes, static_bias=static_bias)
         params = return_dict['params'][:, 0]
         return_dict['params'] = (params,)
         return return_dict

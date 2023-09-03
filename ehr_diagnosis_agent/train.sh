@@ -5,17 +5,14 @@
 source activate /work/frink/mcinerney.de/envs/ehragent
 train_cache_path=/work/frink/mcinerney.de/ehr-diagnosis-agent/ehr_diagnosis_agent/.cache/env_train_cache_1
 val_cache_path=/work/frink/mcinerney.de/ehr-diagnosis-agent/ehr_diagnosis_agent/.cache/env_val_cache_1
-shared_args="env.train_cache_path=${train_cache_path} env.val_cache_path=${val_cache_path} training.random_query_policy=true"
-# echo 'supervised interpretable with risk factors'
-# python train.py $shared_args
-# echo 'supervised interpretable with risk factors and attention'
-# python train.py $shared_args actor.shared_params.use_attn=true
-# echo 'supervised interpretable with risk factors and include no evidence found'
-# python train.py $shared_args actor.shared_params.ignore_no_evidence_found=false
+shared_args="env.train_cache_path=${train_cache_path} env.val_cache_path=${val_cache_path} training.limit_train_size=10000"
 # echo 'supervised clinical-bert (not interpretable) with risk factors'
 # python train.py $shared_args actor.shared_params.embedder_type=bert
-echo 'supervised interpretable independent with risk factors'
-python train.py $shared_args env.reward_type=continuous_independent
+echo 'supervised interpretable with risk factors'
+python -m pdb train.py $shared_args
+# echo 'supervised interpretable with risk factors + randomly drop evidence'
+# python train.py $shared_args actor.shared_params.randomly_drop_evidence=.2
+
 # add clinical longformer and don't use evidence at all, only all raw reports
 
 

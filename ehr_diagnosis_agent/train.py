@@ -7,7 +7,7 @@ from ehr_diagnosis_env.envs import EHRDiagnosisEnv
 import gymnasium
 from eval import evaluate_on_environment
 from utils import get_args, collect_trajectories_train, TqdmSpy, \
-    sample_actor_policy
+    sample_actor_policy, CustomPolicy
 import pandas as pd
 import os
 from models.actor import InterpretableNormalActor, \
@@ -35,34 +35,62 @@ recommended_reward_types = {
 }
 
 
-def log_results(results, split):
-    precision_recall_micro = {
-        f'{split}_precision_micro': results[results.top_1].is_current_target.mean(),
-        f'{split}_recall_micro': results[results.is_current_target].top_1.mean(),
-        f'{split}_precision_det_micro': results[results.top_1_deterministic].is_current_target.mean(),
-        f'{split}_recall_det_micro': results[results.is_current_target].top_1_deterministic.mean(),
-    }
+def log_results(args, results, split):
     targets = set(results.target)
-    precision_recall = {
-        f'{t}/{split}_{p_or_r}{det}': (
-            results[
-                (results.target==t) & results.top_1].is_current_target.mean()
-            if p_or_r == 'precision' else
-            results[
-                (results.target==t) & results.is_current_target].top_1.mean()
-        ) if det == '' else (
-            results[
-                (results.target==t) &
-                results.top_1_deterministic].is_current_target.mean()
-            if p_or_r == 'precision' else
-            results[
-                (results.target==t) &
-                results.is_current_target].top_1_deterministic.mean()
-        )
-        for t in targets
-        for p_or_r in ['precision', 'recall']
-        for det in ['', '_det']
-    }
+    if args.env.reward_type in ['continuous_dependent', 'ranking']:
+        precision_recall_micro = {
+            f'{split}_precision_micro': results[results.top_1].is_current_target.mean(),
+            f'{split}_recall_micro': results[results.is_current_target].top_1.mean(),
+            f'{split}_precision_det_micro': results[results.top_1_deterministic].is_current_target.mean(),
+            f'{split}_recall_det_micro': results[results.is_current_target].top_1_deterministic.mean(),
+        }
+        precision_recall = {
+            f'{t}/{split}_{p_or_r}{det}': (
+                results[
+                    (results.target==t) & results.top_1].is_current_target.mean()
+                if p_or_r == 'precision' else
+                results[
+                    (results.target==t) & results.is_current_target].top_1.mean()
+            ) if det == '' else (
+                results[
+                    (results.target==t) &
+                    results.top_1_deterministic].is_current_target.mean()
+                if p_or_r == 'precision' else
+                results[
+                    (results.target==t) &
+                    results.is_current_target].top_1_deterministic.mean()
+            )
+            for t in targets
+            for p_or_r in ['precision', 'recall']
+            for det in ['', '_det']
+        }
+    else:
+        precision_recall_micro = {
+            f'{split}_precision_micro': results[results.action_target_score > 0].is_current_target.mean(),
+            f'{split}_recall_micro': (results[results.is_current_target].action_target_score > 0).mean(),
+            f'{split}_precision_det_micro': results[results.action_target_score_deterministic > 0].is_current_target.mean(),
+            f'{split}_recall_det_micro': (results[results.is_current_target].action_target_score_deterministic > 0).mean(),
+        }
+        precision_recall = {
+            f'{t}/{split}_{p_or_r}{det}': (
+                results[
+                    (results.target==t) & (results.action_target_score > 0)].is_current_target.mean()
+                if p_or_r == 'precision' else
+                (results[
+                    (results.target==t) & results.is_current_target].action_target_score > 0).mean()
+            ) if det == '' else (
+                results[
+                    (results.target==t) &
+                    (results.action_target_score_deterministic > 0)].is_current_target.mean()
+                if p_or_r == 'precision' else
+                (results[
+                    (results.target==t) &
+                    results.is_current_target].action_target_score_deterministic > 0).mean()
+            )
+            for t in targets
+            for p_or_r in ['precision', 'recall']
+            for det in ['', '_det']
+        }
     precision_recall_macro = {
         f'{split}_{p_or_r}{det}_macro': sum(
             [precision_recall[f'{t}/{split}_{p_or_r}{det}'] for t in targets])
@@ -75,21 +103,6 @@ def log_results(results, split):
         **precision_recall_macro,
         **precision_recall,
     }
-
-
-class CustomPolicy:
-    def __init__(self, random_query_policy, random_rp_policy):
-        self.random_query_policy = random_query_policy
-        self.random_rp_policy = random_rp_policy
-    def __call__(self, actor, obs, env):
-        device = next(iter(actor.parameters())).device
-        if self.random_query_policy and not obs['evidence_is_retrieved']:
-            return torch.tensor(env.action_space.sample(), device=device), \
-                torch.tensor(0, device=device), {}
-        if self.random_rp_policy and obs['evidence_is_retrieved']:
-            return torch.tensor(env.action_space.sample(), device=device), \
-                torch.tensor(0, device=device), {}
-        return sample_actor_policy(actor, obs, env)
 
 
 def main():
@@ -133,7 +146,7 @@ def main():
     if args.training.val_every is not None:
         print('loading validation dataset...')
         val_df = pd.read_csv(os.path.join(
-            args.data.path, args.data.dataset, 'val.data'), compression='gzip')
+            args.data.path, args.data.dataset, 'val1.data'), compression='gzip')
         print('done')
         if args.training.limit_val_size is not None:
             # truncate to first instances because data indices have to be
@@ -142,7 +155,7 @@ def main():
         val_env: EHRDiagnosisEnv | None = gymnasium.make(
             'ehr_diagnosis_env/EHRDiagnosisEnv-v0',
             instances=val_df,
-            cache_path=args.env.val_cache_path,
+            cache_path=args.env.val1_cache_path,
             llm_name_or_interface=llm_interface,
             fmm_name_or_interface=fmm_interface,
             reward_type=args.env.reward_type,
@@ -167,7 +180,6 @@ def main():
     actor_params = args.actor['{}_params'.format(args.actor.type)]
     actor_params.update(args.actor['shared_params'])
     actor = actor_types[args.actor.type](actor_params)
-    actor.train()
     actor.set_device('cuda')
     actor_optimizer = torch.optim.Adam(
         actor.parameters(), lr=args.training.actor_lr)
@@ -231,11 +243,16 @@ def main():
                 val_env, actor, options=options,
                 max_num_episodes=args.training.val_max_num_episodes,
                 max_trajectory_length=args.training.val_max_trajectory_length,
-                filename=results_file)
+                custom_policy=CustomPolicy(
+                    args.training.eval_random_query_policy,
+                    args.training.eval_random_rp_policy),
+                filename=results_file,
+                use_random_start_idx=
+                    args.training.eval_val_use_random_start_idx)
             wandb.log({
                 'epoch': epoch,
                 'updates': updates,
-                **log_results(step_results, 'val'),
+                **log_results(args, step_results, 'val'),
             })
         if train_env is not None and epoch % args.training.trainmetrics_every == 0:
             results_file = os.path.join(
@@ -246,11 +263,16 @@ def main():
                 max_num_episodes=args.training.trainmetrics_max_num_episodes,
                 max_trajectory_length=
                     args.training.trainmetrics_max_trajectory_length,
-                filename=results_file)
+                custom_policy=CustomPolicy(
+                    args.training.eval_random_query_policy,
+                    args.training.eval_random_rp_policy),
+                filename=results_file,
+                use_random_start_idx=
+                    args.training.eval_train_use_random_start_idx)
             wandb.log({
                 'epoch': epoch,
                 'updates': updates,
-                **log_results(step_results, 'train'),
+                **log_results(args, step_results, 'train'),
             })
         # collect trajectories via rolling out with the current policy
         replay_buffer, seed_offset, dataset_iterations = \

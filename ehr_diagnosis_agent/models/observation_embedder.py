@@ -4,6 +4,7 @@ import pandas as pd
 import io
 import torch
 from torch.utils.checkpoint import checkpoint
+import random
 
 
 def run_model(model, example_param, keys, *args):
@@ -16,10 +17,25 @@ class ObservationEmbedder(nn.Module):
         super().__init__()
         self.config = config
         self.tokenizer = AutoTokenizer.from_pretrained(self.config.model_name)
-        self.diagnosis_encoder = AutoModel.from_pretrained(self.config.model_name)
-        self.context_encoder = AutoModel.from_pretrained(self.config.model_name)
-        self.tokenizer.model_max_length = self.diagnosis_encoder.config.max_position_embeddings
+        self.context_encoder = AutoModel.from_pretrained(
+            self.config.model_name)
+        if self.config.static_diagnoses is None:
+            self.diagnosis_encoder = AutoModel.from_pretrained(
+                self.config.model_name)
+        else:
+            self.diagnosis_embeddings = nn.Embedding(
+                len(self.config.static_diagnoses),
+                self.context_encoder.config.hidden_size)
+            self.diagnosis_mapping = {
+                diagnosis: idx for idx, diagnosis in enumerate(
+                    self.config.static_diagnoses)}
+        self.tokenizer.model_max_length = \
+            self.context_encoder.config.max_position_embeddings
         self.device = 'cpu'
+        dim = self.context_encoder.config.hidden_size
+        self.diagnosis_bias_vector = nn.Parameter(torch.randn(dim)) \
+            if self.config.diagnosis_bias and \
+            self.config.static_diagnoses is None else None
 
     def set_device(self, device):
         self.device = device
@@ -47,7 +63,16 @@ class ObservationEmbedder(nn.Module):
             embeddings = self.embed(model, inputs[offset:offset + batch_size])
             all_embeddings.append(embeddings)
         return torch.cat(all_embeddings, 0)
-    
+
+    def get_diagnosis_embeddings(self, potential_diagnoses):
+        if self.config.static_diagnoses is None:
+            return self.batch_embed(self.diagnosis_encoder, potential_diagnoses)
+        else:
+            return self.diagnosis_embeddings(
+                torch.tensor(
+                    [self.diagnosis_mapping[x] for x in potential_diagnoses],
+                    device=self.diagnosis_embeddings.weight.device))
+
     def get_evidence_strings(self, observation):
         evidence = pd.read_csv(io.StringIO(observation['evidence']))
         for k in evidence.columns:
@@ -64,22 +89,23 @@ class ObservationEmbedder(nn.Module):
         metadata = []
         for i, row in evidence.iterrows():
             for k, v in row.items():
-                if self.config.ignore_no_evidence_found and v == 'no evidence found':
-                    continue
                 if k != 'day' and v is not None and v == v:
+                    v = str(v)
+                    if self.config.ignore_no_evidence_found and \
+                            v.lower().strip() in 'no evidence found':
+                        continue
+                    if self.training and \
+                            self.config.randomly_drop_evidence is not None and \
+                            random.random() > self.config.randomly_drop_evidence:
+                        continue
                     k = eval(k)
-                    evidence_strings.append('{} ({}): {} (day {})'.format(k[0], k[1], v, row.day))
+                    evidence_strings.append('{} ({}): {} (day {})'.format(
+                        k[0], k[1], v, row.day))
                     metadata.append({'report_idx': i})
         return evidence_strings, metadata
 
 
 class InterpretableObservationEmbedder(ObservationEmbedder):
-    def __init__(self, config):
-        super().__init__(config)
-        dim = self.diagnosis_encoder.config.hidden_size
-        self.diagnosis_bias_vector = nn.Parameter(torch.randn(dim)) \
-            if self.config.diagnosis_bias else None
-
     def forward(self, observation, ignore_report=False, ignore_evidence=False):
         reports = pd.read_csv(io.StringIO(
             observation['reports']), parse_dates=['date'])
@@ -87,7 +113,8 @@ class InterpretableObservationEmbedder(ObservationEmbedder):
             observation['options'])).apply(
             lambda r: f'{r.option} ({r.type})', axis=1).to_list()
         last_report = reports.iloc[-1].text
-        diagnosis_embeddings = self.batch_embed(self.diagnosis_encoder, potential_diagnoses)
+        diagnosis_embeddings = self.get_diagnosis_embeddings(
+            potential_diagnoses)
         context_strings = []
         context_info = []
         context_embeddings = []
@@ -114,10 +141,15 @@ class InterpretableObservationEmbedder(ObservationEmbedder):
                 evidence_embeddings = self.batch_embed(
                     self.context_encoder, evidence_strings)
                 context_embeddings.append(evidence_embeddings)
+        if len(context_embeddings) == 0:
+            context_strings.append('no evidence found')
+            context_info.append('no evidence')
+            context_embeddings.append(self.batch_embed(
+                self.context_encoder, context_strings[-1:]))
         context_embeddings = torch.cat(context_embeddings) \
             if len(context_embeddings) > 1 else context_embeddings[0]
-        return diagnosis_embeddings, context_embeddings, context_strings, \
-            context_info
+        return diagnosis_embeddings, context_embeddings, potential_diagnoses, \
+            context_strings, context_info
 
 
 class BertObservationEmbedder(ObservationEmbedder):
@@ -128,10 +160,15 @@ class BertObservationEmbedder(ObservationEmbedder):
             observation['options'])).apply(
             lambda r: f'{r.option} ({r.type})', axis=1).to_list()
         last_report = reports.iloc[-1].text
-        diagnosis_embeddings = self.batch_embed(
-            self.diagnosis_encoder, potential_diagnoses)
+        diagnosis_embeddings = self.get_diagnosis_embeddings(
+            potential_diagnoses)
         context_strings = []
         context_info = []
+        context_embeddings = []
+        if self.diagnosis_bias_vector is not None:
+            context_strings.append('[bias vector]')
+            context_info.append('bias')
+            context_embeddings.append(self.diagnosis_bias_vector.unsqueeze(0))
         if ignore_report:
             assert observation['evidence'].strip() != '' or \
                 self.diagnosis_bias_vector is not None
@@ -146,7 +183,10 @@ class BertObservationEmbedder(ObservationEmbedder):
                 context_info += [
                     'evidence (report {})'.format(x['report_idx'])
                     for x in evidence_metadata]
-        context_embeddings = self.batch_embed(
-            self.context_encoder, ['\n\n'.join(context_strings)])
-        return diagnosis_embeddings, context_embeddings, context_strings, \
-            context_info
+        offset = 0 if self.diagnosis_bias_vector is None else 1
+        context_strings = context_strings[:offset] + ['\n\n'.join(context_strings[offset:])]
+        context_info = context_info[:offset] + [' | '.join(context_info[offset:])]
+        context_embeddings.append(self.batch_embed(
+            self.context_encoder, context_strings[-1:]))
+        return diagnosis_embeddings, context_embeddings, potential_diagnoses, \
+            context_strings, context_info

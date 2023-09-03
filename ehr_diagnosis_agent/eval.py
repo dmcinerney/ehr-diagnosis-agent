@@ -9,9 +9,8 @@ import os
 from models.actor import InterpretableNormalActor, \
     InterpretableDirichletActor, InterpretableBetaActor, InterpretableDeltaActor
 import torch
-import wandb
 from tqdm import trange, tqdm
-from omegaconf import OmegaConf
+from utils import CustomPolicy, reset_at_random_idx
 import gc
 import io
 
@@ -114,7 +113,9 @@ def episode_to_df(
 
 def evaluate_on_environment(
         env, actor, options=None, max_num_episodes=None,
-        max_trajectory_length=None, filename=None):
+        max_trajectory_length=None, custom_policy=None, filename=None,
+        use_random_start_idx=False):
+    actor.eval()
     if filename is not None:
         if os.path.exists(filename):
             print(f'overwriting results at {filename}')
@@ -132,11 +133,16 @@ def evaluate_on_environment(
         for episode in pbar:
             options['instance_index'] = episode
             obs, info = env.reset(options=options)
-            replay_buffer = ReplayBuffer()
-            if not collect_episode(
-                    env, actor, replay_buffer, obs, info,
-                    max_trajectory_length=max_trajectory_length):
+            if env.is_terminated(obs, info) or \
+                    env.is_truncated(obs, info):
                 continue
+            if use_random_start_idx:
+                obs, info = reset_at_random_idx(env, info, options=options)
+            replay_buffer = ReplayBuffer()
+            assert collect_episode(
+                env, actor, replay_buffer, obs, info,
+                max_trajectory_length=max_trajectory_length,
+                custom_policy=custom_policy)
             steps_df, episode_row = episode_to_df(
                 env, actor, replay_buffer,
                 all_targets=env.all_reference_diagnoses)
@@ -222,7 +228,11 @@ def main():
         env, actor, options=options,
         max_num_episodes=args.eval.max_num_episodes,
         max_trajectory_length=args.eval.max_trajectory_length,
-        filename=os.path.join(path, filename))
+        custom_policy=CustomPolicy(
+            args.eval.random_query_policy,
+            args.eval.random_rp_policy),
+        filename=os.path.join(path, filename),
+        use_random_start_idx=args.eval.use_random_start_idx)
 
 
 if __name__ == '__main__':
