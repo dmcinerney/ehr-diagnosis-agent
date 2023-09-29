@@ -8,24 +8,31 @@ write_to_cache:
   slice: '10000,20000'
   split: train
   run_through_episode: false
+  subset_file: null
+  # run_through_episode: true
+  # subset_file: train_subset.pkl
   cache_dir: /work/frink/mcinerney.de/ehr-diagnosis-agent/ehr_diagnosis_agent/.cache/env_train_cache_2
+sample_subset:
+  split: train
+  subset_file: train_subset.pkl
+  negatives_percentage: .2
+  seed: 0
 training:
   limit_train_size: null
   limit_val_size: null
+  train_subset_file: train_subset.pkl
   resume_from: null
-  num_epochs: 600
+  num_epochs: 1200
   # num_episodes: 64
-  num_episodes: 1024
+  num_episodes: 512
   batch_size: 1
-  accumulate_grad_batches: 128
-  actor_lr: 3e-6
-  # actor_lr: 1e-5
-  actor_warmup: 400
-  actor_training_steps: 36000
-  # critic_lr: 3e-6
+  accumulate_grad_batches: 64 #128
+  actor_lr: 1e-5
+  actor_warmup: 200
+  actor_training_steps: 10000
   critic_lr: 1e-5
   critic_warmup: 200
-  critic_training_steps: 36000
+  critic_training_steps: 10000
   checkpoint_every: 5
   # objective_optimization: ppo_gae
   objective_optimization: supervised
@@ -44,8 +51,8 @@ training:
   random_rp_policy: true
   eval_random_query_policy: true
   eval_random_rp_policy: false
-  val_max_num_episodes: 200
-  trainmetrics_max_num_episodes: 200
+  val_max_num_episodes: 300
+  trainmetrics_max_num_episodes: 300
   max_trajectory_length: 2
   val_max_trajectory_length: 2
   trainmetrics_max_trajectory_length: 2
@@ -92,10 +99,10 @@ env:
   fmm_name: 'all-MiniLM-L6-v2'
   reward_type: 'continuous_independent'
   # reward_type: 'continuous_dependent'
-  num_future_diagnoses_threshold: 1
-  true_positive_minimum: 1
-  train_cache_path: /work/frink/mcinerney.de/ehr-diagnosis-agent/ehr_diagnosis_agent/.cache/env_train_cache_1
-  val1_cache_path: /work/frink/mcinerney.de/ehr-diagnosis-agent/ehr_diagnosis_agent/.cache/env_val1_cache_1
+  num_future_diagnoses_threshold: 0
+  true_positive_minimum: 0
+  train_cache_path: /work/frink/mcinerney.de/ehr-diagnosis-agent/ehr_diagnosis_agent/.cache/env_train_cache_2
+  val1_cache_path: /work/frink/mcinerney.de/ehr-diagnosis-agent/ehr_diagnosis_agent/.cache/env_val1_cache_2
   top_k_evidence: 100
   # add_risk_factor_queries: false
   add_risk_factor_queries: true
@@ -103,6 +110,8 @@ env:
   # limit_options_with_llm: true
   add_none_of_the_above_option: false
   use_confident_diagnosis_mapping: true
+  skip_instances_with_gt_n_reports: 200
+  exclude_evidence: false
 actor:
   # type: normal
   # type: dirichlet
@@ -114,6 +123,15 @@ actor:
       - cancer (diagnosis)
       - pneumonia (diagnosis)
       - pulmonary edema (diagnosis)
+    # static_bias_params: null
+    static_bias_params: # for training
+      - [-1.4396936453085785]
+      - [-0.5889434030299426]
+      - [-0.05625351040116628]
+    # static_bias_params: # for inference
+    #   - [-2.642675509576076]
+    #   - [-1.9572920156106348]
+    #   - [-1.5961686236710402]
     embedder_type: interpretable
     # embedder_type: bert
     model_name: emilyalsentzer/Bio_ClinicalBERT
@@ -121,12 +139,15 @@ actor:
     diagnosis_bias: true
     use_attn: false
     embedding_batch_size: 16 #32
-    grad_checkpointing: false
+    grad_checkpointing: true
     ignore_evidence: false
     ignore_no_evidence_found: true
     randomly_drop_evidence: null
-    # randomly_drop_evidence: .3
+    # randomly_drop_evidence: .2
     separate_bias: true
+    constant_denominator: 10
+    use_raw_sentences: false
+    limit_num_sentences: 1000
   normal_params:
     stddev_min: .02
     stddev_max: 1
@@ -149,8 +170,8 @@ critic:
   model_name: emilyalsentzer/Bio_ClinicalBERT
   diagnosis_bias: true
   # model_name: roberta-base
-  embedding_batch_size: 32
+  embedding_batch_size: 8 #32
   grad_checkpointing: false
   ignore_no_evidence_found: false
-  # randomly_drop_evidence: null
-  randomly_drop_evidence: .3
+  randomly_drop_evidence: null
+  # randomly_drop_evidence: .2

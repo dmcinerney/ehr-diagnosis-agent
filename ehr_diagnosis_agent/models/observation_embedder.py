@@ -5,6 +5,7 @@ import io
 import torch
 from torch.utils.checkpoint import checkpoint
 import random
+import nltk
 
 
 def run_model(model, example_param, keys, *args):
@@ -73,9 +74,40 @@ class ObservationEmbedder(nn.Module):
                     [self.diagnosis_mapping[x] for x in potential_diagnoses],
                     device=self.diagnosis_embeddings.weight.device))
 
+    def get_raw_sentences(self, observation):
+        past_reports = pd.read_csv(
+            io.StringIO(observation['past_reports']), parse_dates=['date'])
+        reports = pd.read_csv(
+            io.StringIO(observation['reports']), parse_dates=['date'])
+        all_reports = pd.concat([past_reports, reports]).reset_index()
+        evidence_strings = []
+        metadata = []
+        # TODO: limit the number of reports or sentences considered?
+        for i, row in all_reports[::-1].iterrows():
+            day = (row.date - reports.iloc[0].date).days
+            sentences = nltk.sent_tokenize(row.text)
+            for sent in sentences[::-1]:
+                evidence_strings.insert(
+                    0, '{} (day {})'.format(sent, day))
+                metadata.insert(0, {'report_idx': i})
+                if self.config.limit_num_sentences is not None and \
+                        len(evidence_strings) >= \
+                        self.config.limit_num_sentences:
+                    break
+            if self.config.limit_num_sentences is not None and \
+                    len(evidence_strings) >= self.config.limit_num_sentences:
+                break
+        return evidence_strings, metadata
+
     def get_evidence_strings(self, observation):
+        if self.config.use_raw_sentences:
+            return self.get_raw_sentences(observation)
         evidence = pd.read_csv(io.StringIO(observation['evidence']))
+        # remove all occurances before the last occurance of a
+        # particular evidence snippet
         for k in evidence.columns:
+            if k == 'day' or k.endswith(' certainty'):
+                continue
             set_of_evidence = set()
             new_evidence_list = []
             for e in evidence[k][::-1]:
@@ -89,19 +121,25 @@ class ObservationEmbedder(nn.Module):
         metadata = []
         for i, row in evidence.iterrows():
             for k, v in row.items():
-                if k != 'day' and v is not None and v == v:
-                    v = str(v)
-                    if self.config.ignore_no_evidence_found and \
-                            v.lower().strip() in 'no evidence found':
-                        continue
-                    if self.training and \
-                            self.config.randomly_drop_evidence is not None and \
-                            random.random() > self.config.randomly_drop_evidence:
-                        continue
-                    k = eval(k)
-                    evidence_strings.append('{} ({}): {} (day {})'.format(
-                        k[0], k[1], v, row.day))
-                    metadata.append({'report_idx': i})
+                if k == 'day' or k.endswith(' confidence') or v is None \
+                        or v != v:
+                    continue
+                v = str(v)
+                if self.config.ignore_no_evidence_found and \
+                        v.lower().strip() in 'no evidence found':
+                    continue
+                if self.training and \
+                        self.config.randomly_drop_evidence is not None and \
+                        random.random() > self.config.randomly_drop_evidence:
+                    continue
+                k = eval(k)
+                evidence_strings.append('{} ({}): {} (day {})'.format(
+                    k[0], k[1], v, row.day))
+                metadata.append({'report_idx': i})
+                if str(k) + ' confidence' in row.keys() and \
+                        row[str(k) + ' confidence'] == row[
+                            str(k) + ' confidence']:
+                    metadata[-1]['confidence'] = row[str(k) + ' confidence']
         return evidence_strings, metadata
 
 
@@ -135,13 +173,22 @@ class InterpretableObservationEmbedder(ObservationEmbedder):
                 observation)
             if len(evidence_strings) > 0:
                 context_strings += evidence_strings
-                context_info += [
-                    'evidence (report {})'.format(x['report_idx'] + 1)
-                    for x in evidence_metadata]
+                if self.config.use_raw_sentences:
+                    context_info += [
+                        'sentence (report {})'.format(x['report_idx'] + 1)
+                        for x in evidence_metadata]
+                else:
+                    context_info += [
+                        'evidence (report {}, confidence {})'.format(
+                            x['report_idx'] + 1,
+                            'unk' if 'confidence' not in x.keys() else
+                            x['confidence'])
+                        for x in evidence_metadata]
                 evidence_embeddings = self.batch_embed(
                     self.context_encoder, evidence_strings)
                 context_embeddings.append(evidence_embeddings)
         if len(context_embeddings) == 0:
+            # if there is a static bias, this serves as a dummy vector
             context_strings.append('no evidence found')
             context_info.append('no evidence')
             context_embeddings.append(self.batch_embed(

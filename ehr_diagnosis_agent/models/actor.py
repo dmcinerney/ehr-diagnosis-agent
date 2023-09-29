@@ -43,6 +43,20 @@ class Actor(nn.Module):
         if self.has_bias and self.config.static_diagnoses is not None:
             self.static_bias = nn.Embedding(
                 len(self.config.static_diagnoses), self.param_vec_size)
+            if self.config.static_bias_params is not None:
+                self.static_bias.weight.data = torch.tensor(
+                    self.config.static_bias_params)
+                for p in self.static_bias.parameters():
+                    p.requires_grad = False
+
+    def load_state_dict(self, state_dict):
+        if self.has_bias and self.config.static_diagnoses is not None and \
+                self.config.static_bias_params is not None:
+            state_dict = {k: v for k, v in state_dict.items()
+                          if not k.startswith('static_bias.')}
+        keys = super().load_state_dict(state_dict, strict=False)
+        print(keys)
+        return keys
 
     @property
     def param_vec_size(self):
@@ -55,20 +69,17 @@ class Actor(nn.Module):
         self.to(device)
         self.observation_embedder.set_device(device)
 
-    def get_static_bias(self, vote_info):
+    def get_static_bias(self, diagnosis_strings):
         if self.has_bias and self.config.static_diagnoses is not None:
             return self.static_bias(
                 torch.tensor(
                     [self.observation_embedder.diagnosis_mapping[x]
-                     for x in vote_info['diagnosis_strings']],
+                     for x in diagnosis_strings],
                     device=self.static_bias.weight.device))
 
     def forward(self, observation):
         vote_info = self.get_dist_parameter_votes(observation)
-        param_info = self.votes_to_parameters(
-            vote_info['diagnosis_embeddings'], vote_info['context_embeddings'],
-            vote_info['param_votes'],
-            static_bias=self.get_static_bias(vote_info))
+        param_info = self.votes_to_parameters(vote_info)
         dist = self.parameters_to_dist(*param_info['params'])
         action = dist.rsample()
         return {
@@ -88,25 +99,43 @@ class Actor(nn.Module):
     def has_bias(self):
         return self.config.diagnosis_bias
 
-    def votes_to_parameters(self, diagnosis_embeddings, context_embeddings,
-                            param_votes, static_bias=None):
+    def transform_parameters(self, param_info):
+        raise NotImplementedError
+
+    def votes_to_parameters(self, vote_info):
         """
         diagnosis embeddings (num_diagnoses, kdim)
         context_embeddings (num_contexts, kdim)
         param_votes (num_diagnoses, num_contexts, vdim)
         """
+        param_votes = vote_info['param_votes']
+        static_bias = self.get_static_bias(vote_info['diagnosis_strings'])
+        param_info = {}
+        if self.has_bias:
+            if self.config.static_diagnoses is None:
+                param_info['bias'] = param_votes[:, 0]
+            else:
+                assert static_bias is not None
+                param_info['bias'] = static_bias
         if self.attention is None:
             if self.has_bias and self.config.separate_bias and \
                     self.config.static_diagnoses is None:
                 params = param_votes[:, 0]
                 if param_votes.shape[1] > 1:
-                    params = params + param_votes[:, 1:].mean(1)
+                    params = params / self.config.constant_denominator \
+                        + param_votes[:, 1:].mean(1)
             else:
                 params = param_votes.mean(1)
             if static_bias is not None:
-                params = params + static_bias
-            return {'params': params}
+                if vote_info['context_info'][0] == 'no evidence':
+                    params = static_bias
+                else:
+                    params = params / self.config.constant_denominator \
+                        + static_bias
+            param_info['params'] = params
         else:
+            diagnosis_embeddings = vote_info['diagnosis_embeddings']
+            context_embeddings = vote_info['context_embeddings']
             kdim = diagnosis_embeddings.shape[-1]
             nd, nc, vdim = param_votes.shape
             # (1, num_diagnoses, vdim)
@@ -127,7 +156,8 @@ class Actor(nn.Module):
                         key=context_embeddings[1:],
                         value=param_votes[1:])
                     # add the bias
-                    params = attn_output.squeeze(0) + param_votes[0]
+                    params = attn_output.squeeze(0) / \
+                        self.config.constant_denominator + param_votes[0]
                 else:
                     params = param_votes[0]
             else:
@@ -138,16 +168,18 @@ class Actor(nn.Module):
                     value=param_votes)
                 params = attn_output.squeeze(0)
             if static_bias is not None:
-                params = params + static_bias
-            return {'params': params,
-                    'context_attn_weights': attn_output_weights.squeeze(1)}
+                if vote_info['context_info'][0] == 'no evidence':
+                    params = static_bias
+                else:
+                    params = params / self.config.constant_denominator \
+                        + static_bias
+            param_info['params'] = params
+            param_info['context_attn_weights'] = attn_output_weights.squeeze(1)
+        return self.transform_parameters(param_info)
 
     def get_dist_parameters(self, observation):
         vote_info = self.get_dist_parameter_votes(observation)
-        return self.votes_to_parameters(
-            vote_info['diagnosis_embeddings'], vote_info['context_embeddings'],
-            vote_info['param_votes'],
-            static_bias=self.get_static_bias(vote_info))
+        return self.votes_to_parameters(vote_info)
 
     @staticmethod
     def parameters_to_dist(*args, **kwargs):
@@ -157,8 +189,7 @@ class Actor(nn.Module):
         return self.parameters_to_dist(
             *self.get_dist_parameters(observation)['params'])
 
-    @staticmethod
-    def get_dist_stats(dists):
+    def get_dist_stats(self, forward_pass_info):
         return {}
 
     @staticmethod
@@ -229,32 +260,29 @@ class InterpretableNormalActor(Actor):
             'diagnosis_embeddings': diagnosis_embeddings,
             'context_info': context_info,
         }
-
-    def votes_to_parameters(self, diagnosis_embeddings, context_embeddings,
-                            param_votes, static_bias=None):
-        return_dict = super().votes_to_parameters(
-            diagnosis_embeddings, context_embeddings, param_votes, static_bias=static_bias)
-        mean = return_dict['params'][:, 0]
-        log_stddev = return_dict['params'][:, 1]
+    
+    def transform_parameters(self, param_info):
+        mean = param_info['params'][:, 0]
+        log_stddev = param_info['params'][:, 1]
         mean = self.entropy_control * (mean - mean.mean()) / mean.std()
         # stddev = torch.nn.functional.softplus(log_stddevs.mean(-1)) + \
         #     self.config.stddev_bias
         stddev = self.config.stddev_min + (
             self.config.stddev_max - self.config.stddev_min
             ) * torch.nn.functional.sigmoid(log_stddev)
-        return_dict['params'] = (mean, stddev)
-        return return_dict
+        param_info['params'] = (mean, stddev)
+        return param_info
 
     @staticmethod
     def parameters_to_dist(mean, stddev):
         return Normal(mean, stddev)
 
-    @staticmethod
-    def get_dist_stats(dists):
-        return {
-            'avg_normal_loc': torch.stack([dist.loc.mean() for dist in dists]).mean(),
-            'avg_normal_loc_stddev': torch.stack([dist.loc.std() for dist in dists]).mean(),
-            'avg_normal_scale': torch.stack([dist.scale.mean() for dist in dists]).mean()}
+    def get_dist_stats(self, forward_pass_info):
+        return {}
+        # return {
+        #     'avg_normal_loc': torch.stack([dist.loc.mean() for dist in dists]).mean(),
+        #     'avg_normal_loc_stddev': torch.stack([dist.loc.std() for dist in dists]).mean(),
+        #     'avg_normal_scale': torch.stack([dist.scale.mean() for dist in dists]).mean()}
 
 
 class InterpretableDirichletActor(Actor):
@@ -301,24 +329,23 @@ class InterpretableDirichletActor(Actor):
             'context_info': context_info,
         }
 
-    def votes_to_parameters(self, diagnosis_embeddings, context_embeddings, param_votes, static_bias=None):
-        return_dict = super().votes_to_parameters(diagnosis_embeddings, context_embeddings, param_votes, static_bias=static_bias)
-        concentration = torch.nn.functional.softplus(return_dict['params'][:, 0]) + self.config.concentration_min
-        return_dict['params'] = (concentration,)
-        return return_dict
+    def transform_parameters(self, param_info):
+        concentration = torch.nn.functional.softplus(param_info['params'][:, 0]) + self.config.concentration_min
+        param_info['params'] = (concentration,)
+        return param_info
 
     @staticmethod
     def parameters_to_dist(concentration):
         # need to transform the dirichlet because
         return TransformedDistribution(Dirichlet(concentration), [ExpTransform().inv])
 
-    @staticmethod
-    def get_dist_stats(dists):
-        return {
-            'avg_dirichlet_concentration': torch.stack(
-                [dist.base_dist.concentration.mean() for dist in dists]).mean(),
-            'avg_dirichlet_concentration_stddev': torch.stack(
-                [dist.base_dist.concentration.std() for dist in dists]).mean()}
+    def get_dist_stats(self, forward_pass_info):
+        return {}
+        # return {
+        #     'avg_dirichlet_concentration': torch.stack(
+        #         [dist.base_dist.concentration.mean() for dist in dists]).mean(),
+        #     'avg_dirichlet_concentration_stddev': torch.stack(
+        #         [dist.base_dist.concentration.std() for dist in dists]).mean()}
 
     @staticmethod
     def get_mean(dists):
@@ -383,29 +410,28 @@ class InterpretableBetaActor(Actor):
             'context_info': context_info,
         }
 
-    def votes_to_parameters(self, diagnosis_embeddings, context_embeddings, param_votes, static_bias=None):
-        return_dict = super().votes_to_parameters(diagnosis_embeddings, context_embeddings, param_votes, static_bias=static_bias)
-        concentration1, concentration0 = return_dict['params'][:, 0], return_dict['params'][:, 1]
+    def transform_parameters(self, param_info):
+        concentration1, concentration0 = param_info['params'][:, 0], param_info['params'][:, 1]
         concentration1 = torch.nn.functional.softplus(concentration1) + self.config.concentration_min
         concentration0 = torch.nn.functional.softplus(concentration0) + self.config.concentration_min
-        return_dict['params'] = (concentration1, concentration0)
-        return return_dict
+        param_info['params'] = (concentration1, concentration0)
+        return param_info
 
     @staticmethod
     def parameters_to_dist(concentration1, concentration0):
         return TransformedDistribution(Beta(concentration1, concentration0), [SigmoidTransform().inv])
 
-    @staticmethod
-    def get_dist_stats(dists):
-        return {
-            'avg_beta_concentration1': torch.stack(
-                [dist.base_dist.concentration1.mean() for dist in dists]).mean(),
-            'avg_beta_concentration1_stddev': torch.stack(
-                [dist.base_dist.concentration1.std() for dist in dists]).mean(),
-            'avg_beta_concentration0': torch.stack(
-                [dist.base_dist.concentration0.mean() for dist in dists]).mean(),
-            'avg_beta_concentration0_stddev': torch.stack(
-                [dist.base_dist.concentration0.std() for dist in dists]).mean()}
+    def get_dist_stats(self, forward_pass_info):
+        return {}
+        # return {
+        #     'avg_beta_concentration1': torch.stack(
+        #         [dist.base_dist.concentration1.mean() for dist in dists]).mean(),
+        #     'avg_beta_concentration1_stddev': torch.stack(
+        #         [dist.base_dist.concentration1.std() for dist in dists]).mean(),
+        #     'avg_beta_concentration0': torch.stack(
+        #         [dist.base_dist.concentration0.mean() for dist in dists]).mean(),
+        #     'avg_beta_concentration0_stddev': torch.stack(
+        #         [dist.base_dist.concentration0.std() for dist in dists]).mean()}
 
     @staticmethod
     def get_mean(dists):
@@ -460,18 +486,26 @@ class InterpretableDeltaActor(Actor):
             'context_info': context_info,
         }
 
-    def votes_to_parameters(self, diagnosis_embeddings, context_embeddings, param_votes, static_bias=None):
-        return_dict = super().votes_to_parameters(diagnosis_embeddings, context_embeddings, param_votes, static_bias=static_bias)
-        params = return_dict['params'][:, 0]
-        return_dict['params'] = (params,)
-        return return_dict
+    def transform_parameters(self, param_info):
+        params = param_info['params'][:, 0]
+        param_info['params'] = (params,)
+        return param_info
 
     @staticmethod
     def parameters_to_dist(params):
         return Delta(params)
 
-    @staticmethod
-    def get_dist_stats(dists):
-        return {
-            'avg_delta_param': torch.stack(
-                [dist.param.mean() for dist in dists]).mean()}
+    def get_dist_stats(self, forward_pass_info):
+        return_dict = {
+            'avg_delta_param': torch.stack([
+                info['params'][0].mean()
+                for info in forward_pass_info]).mean(),
+        }
+        if self.has_bias:
+            return_dict['avg_evidence_delta'] = torch.stack([
+                (info['params'][0] - info['bias'][0]).mean()
+                for info in forward_pass_info]).mean()
+        return return_dict
+        # return {
+        #     'avg_delta_param': torch.stack(
+        #         [dist.param.mean() for dist in dists]).mean()}

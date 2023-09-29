@@ -7,7 +7,7 @@ from ehr_diagnosis_env.envs import EHRDiagnosisEnv
 import gymnasium
 from eval import evaluate_on_environment
 from utils import get_args, collect_trajectories_train, TqdmSpy, \
-    sample_actor_policy, CustomPolicy
+    sample_actor_policy, CustomPolicy, log_results
 import pandas as pd
 import os
 from models.actor import InterpretableNormalActor, \
@@ -19,6 +19,9 @@ from tqdm import trange, tqdm
 from omegaconf import OmegaConf
 from updates import update, ppo_dae_update
 import gc
+import numpy as np
+import random
+import pickle as pkl
 
 
 actor_types = {
@@ -33,76 +36,6 @@ recommended_reward_types = {
     'beta': ['continuous_independent', 'ranking'],
     'delta': ['continuous_independent', 'continuous_dependent', 'ranking'],
 }
-
-
-def log_results(args, results, split):
-    targets = set(results.target)
-    if args.env.reward_type in ['continuous_dependent', 'ranking']:
-        precision_recall_micro = {
-            f'{split}_precision_micro': results[results.top_1].is_current_target.mean(),
-            f'{split}_recall_micro': results[results.is_current_target].top_1.mean(),
-            f'{split}_precision_det_micro': results[results.top_1_deterministic].is_current_target.mean(),
-            f'{split}_recall_det_micro': results[results.is_current_target].top_1_deterministic.mean(),
-        }
-        precision_recall = {
-            f'{t}/{split}_{p_or_r}{det}': (
-                results[
-                    (results.target==t) & results.top_1].is_current_target.mean()
-                if p_or_r == 'precision' else
-                results[
-                    (results.target==t) & results.is_current_target].top_1.mean()
-            ) if det == '' else (
-                results[
-                    (results.target==t) &
-                    results.top_1_deterministic].is_current_target.mean()
-                if p_or_r == 'precision' else
-                results[
-                    (results.target==t) &
-                    results.is_current_target].top_1_deterministic.mean()
-            )
-            for t in targets
-            for p_or_r in ['precision', 'recall']
-            for det in ['', '_det']
-        }
-    else:
-        precision_recall_micro = {
-            f'{split}_precision_micro': results[results.action_target_score > 0].is_current_target.mean(),
-            f'{split}_recall_micro': (results[results.is_current_target].action_target_score > 0).mean(),
-            f'{split}_precision_det_micro': results[results.action_target_score_deterministic > 0].is_current_target.mean(),
-            f'{split}_recall_det_micro': (results[results.is_current_target].action_target_score_deterministic > 0).mean(),
-        }
-        precision_recall = {
-            f'{t}/{split}_{p_or_r}{det}': (
-                results[
-                    (results.target==t) & (results.action_target_score > 0)].is_current_target.mean()
-                if p_or_r == 'precision' else
-                (results[
-                    (results.target==t) & results.is_current_target].action_target_score > 0).mean()
-            ) if det == '' else (
-                results[
-                    (results.target==t) &
-                    (results.action_target_score_deterministic > 0)].is_current_target.mean()
-                if p_or_r == 'precision' else
-                (results[
-                    (results.target==t) &
-                    results.is_current_target].action_target_score_deterministic > 0).mean()
-            )
-            for t in targets
-            for p_or_r in ['precision', 'recall']
-            for det in ['', '_det']
-        }
-    precision_recall_macro = {
-        f'{split}_{p_or_r}{det}_macro': sum(
-            [precision_recall[f'{t}/{split}_{p_or_r}{det}'] for t in targets])
-            / len(targets)
-        for p_or_r in ['precision', 'recall']
-        for det in ['', '_det']
-    }
-    return {
-        **precision_recall_micro,
-        **precision_recall_macro,
-        **precision_recall,
-    }
 
 
 def main():
@@ -125,6 +58,11 @@ def main():
         if args.env.llm_name is not None else None
     fmm_interface = SentenceTransformer(args.env.fmm_name) \
         if args.env.fmm_name is not None else None
+    if args.training.train_subset_file is None:
+        subset = None
+    else:
+        with open(args.training.train_subset_file, 'rb') as f:
+            subset = pkl.load(f)
     train_env: EHRDiagnosisEnv = gymnasium.make(
         'ehr_diagnosis_env/EHRDiagnosisEnv-v0',
         instances=train_df,
@@ -142,6 +80,9 @@ def main():
         true_positive_minimum=args.env.true_positive_minimum,
         use_confident_diagnosis_mapping=
             args.env.use_confident_diagnosis_mapping,
+        skip_instances_with_gt_n_reports=
+            args.env.skip_instances_with_gt_n_reports,
+        subset=subset,
     ) # type: ignore
     if args.training.val_every is not None:
         print('loading validation dataset...')
@@ -170,6 +111,8 @@ def main():
             true_positive_minimum=args.env.true_positive_minimum,
             use_confident_diagnosis_mapping=
                 args.env.use_confident_diagnosis_mapping,
+            skip_instances_with_gt_n_reports=
+                args.env.skip_instances_with_gt_n_reports,
         ) # type: ignore
     else:
         val_env = None
@@ -181,8 +124,15 @@ def main():
     actor_params.update(args.actor['shared_params'])
     actor = actor_types[args.actor.type](actor_params)
     actor.set_device('cuda')
-    actor_optimizer = torch.optim.Adam(
-        actor.parameters(), lr=args.training.actor_lr)
+    if actor.has_bias and actor.config.static_diagnoses is not None:
+        actor_params = [
+            {'params': [v for k, v in actor.named_parameters()
+                        if not k.startswith('static_bias')]},
+            {'params': actor.static_bias.parameters(), 'lr': 1e-2},
+        ]
+    else:
+        actor_params = actor.parameters()
+    actor_optimizer = torch.optim.Adam(actor_params, lr=args.training.actor_lr)
     actor_scheduler = get_linear_schedule_with_warmup(
         actor_optimizer, args.training.actor_warmup,
         args.training.actor_training_steps)
@@ -234,6 +184,8 @@ def main():
                 gc.collect()
                 torch.cuda.empty_cache()
         train_env.to('cuda') # train and val envs have connected models
+        # Note: all the evaluation and trajectory collecting functions control
+        #   their random seeds
         if val_env is not None and epoch % args.training.val_every == 0:
             # validate current model
             results_file = os.path.join(
@@ -252,14 +204,15 @@ def main():
             wandb.log({
                 'epoch': epoch,
                 'updates': updates,
-                **log_results(args, step_results, 'val'),
+                **log_results(
+                    args.env.reward_type, step_results, 'val', actor=actor),
             })
         if train_env is not None and epoch % args.training.trainmetrics_every == 0:
             results_file = os.path.join(
                 run.dir, 'train_metrics_ckpt_epoch={}_updates={}.csv'.format(
                     epoch, updates))
             step_results, episode_results = evaluate_on_environment(
-                train_env, actor, options=options,
+                train_env, actor, options=dict(add_to_seen=False, **options),
                 max_num_episodes=args.training.trainmetrics_max_num_episodes,
                 max_trajectory_length=
                     args.training.trainmetrics_max_trajectory_length,
@@ -272,7 +225,8 @@ def main():
             wandb.log({
                 'epoch': epoch,
                 'updates': updates,
-                **log_results(args, step_results, 'train'),
+                **log_results(
+                    args.env.reward_type, step_results, 'train', actor=actor),
             })
         # collect trajectories via rolling out with the current policy
         replay_buffer, seed_offset, dataset_iterations = \
@@ -291,6 +245,11 @@ def main():
             else:
                 freeze_actor_mode = None
             actor.freeze(mode=freeze_actor_mode)
+        # set seeds after eval and trajectory collection for training
+        # randomness
+        random.seed(epoch)
+        np.random.seed(epoch)
+        torch.manual_seed(epoch)
         if args.training.objective_optimization == 'ppo_dae':
             updates = ppo_dae_update(
                 args, replay_buffer, actor, actor_optimizer,

@@ -6,6 +6,8 @@ import wandb
 import random
 import pandas as pd
 import io
+from torch import nn
+from sklearn.metrics import roc_auc_score
 
 
 def get_args(config_file):
@@ -45,13 +47,12 @@ def collect_episode(
     # Collect the episode trajectory given a starting state/environment.
     # If the starting state/environment is valid, return True and add
     # trajectory to the buffer, otherwise return False.
-    terminated = env.is_terminated(obs, info)
-    truncated = env.is_truncated(obs, info)
-    if terminated or truncated:
+    if not info['is_valid_timestep']:
         return False
     t = 0
     sample_exploration_policy = sample_actor_policy \
         if custom_policy is None else custom_policy
+    terminated, truncated = not info['is_valid_timestep'], False
     while not (terminated or truncated):
         action, action_log_prob, action_info = sample_exploration_policy(
             actor, obs, env)
@@ -87,6 +88,8 @@ def reset_env_train(
 
 
 def reset_at_random_idx(env, info, seed=None, options=None):
+    if seed is not None:
+        random.seed(seed)
     new_options = {
         'start_report_index': random.randint(
             info['current_report'],
@@ -110,8 +113,7 @@ def collect_trajectories_train(
             obs, info, dataset_iterations = reset_env_train(
                 train_env, epoch * episode + seed_offset, options,
                 dataset_iterations, dataset_progress, epoch)
-            while train_env.is_terminated(obs, info) or \
-                    train_env.is_truncated(obs, info):
+            while not info['is_valid_timestep']:
                 # dead environment, retrying...
                 seed_offset += 1
                 obs, info, dataset_iterations = reset_env_train(
@@ -137,19 +139,25 @@ def collect_trajectories_train(
 
 
 class ReplayBuffer:
-    def __init__(self):
-        self.observations = []
-        self.infos = []
-        self.actions = []
-        self.action_log_probs = []
-        self.rewards = []
-        self.terminated = []
-        self.truncated = []
-        self.next_observations = []
-        self.next_infos = []
-        self.action_infos = []
-        self.episode_id = 0
-        self.episode_ids = []
+    def __init__(
+            self, observations=None, infos=None, actions=None,
+            action_log_probs=None, rewards=None, terminated=None,
+            truncated=None, next_observations=None, next_infos=None,
+            action_infos=None, episode_id=0, episode_ids=None):
+        self.observations = [] if observations is None else observations
+        self.infos = [] if infos is None else infos
+        self.actions = [] if actions is None else actions
+        self.action_log_probs = [] if action_log_probs is None else \
+            action_log_probs
+        self.rewards = [] if rewards is None else rewards
+        self.terminated = [] if terminated is None else terminated
+        self.truncated = [] if truncated is None else truncated
+        self.next_observations = [] if next_observations is None else \
+            next_observations
+        self.next_infos = [] if next_infos is None else next_infos
+        self.action_infos = [] if action_infos is None else action_infos
+        self.episode_id = episode_id
+        self.episode_ids = [] if episode_ids is None else episode_ids
 
     def append(
             self, observation, info, action, action_log_prob, reward,
@@ -228,3 +236,111 @@ class TqdmSpy(tqdm):
     @n.setter
     def n(self, value):
         self.__n = value
+
+
+def log_results(reward_type, results, split, actor=None):
+    return_dict = {}
+    # for these metrics limit to targets that appear in the options list
+    results = results[results.is_positive]
+    targets = set(results.target)
+    if reward_type in ['continuous_dependent', 'ranking']:
+        precision_recall_micro = {
+            f'{split}_precision_micro': results[results.top_1].is_current_target.mean(),
+            f'{split}_recall_micro': results[results.is_current_target].top_1.mean(),
+            f'{split}_precision_det_micro': results[results.top_1_deterministic].is_current_target.mean(),
+            f'{split}_recall_det_micro': results[results.is_current_target].top_1_deterministic.mean(),
+        }
+        precision_recall = {
+            f'{t}/{split}_{p_or_r}{det}': (
+                results[
+                    (results.target==t) & results.top_1].is_current_target.mean()
+                if p_or_r == 'precision' else
+                results[
+                    (results.target==t) & results.is_current_target].top_1.mean()
+            ) if det == '' else (
+                results[
+                    (results.target==t) &
+                    results.top_1_deterministic].is_current_target.mean()
+                if p_or_r == 'precision' else
+                results[
+                    (results.target==t) &
+                    results.is_current_target].top_1_deterministic.mean()
+            )
+            for t in targets
+            for p_or_r in ['precision', 'recall']
+            for det in ['', '_det']
+        }
+    else:
+        precision_recall_micro = {
+            f'{split}_precision_micro': results[results.action_target_score > 0].is_current_target.mean(),
+            f'{split}_recall_micro': (results[results.is_current_target].action_target_score > 0).mean(),
+            f'{split}_precision_det_micro': results[results.action_target_score_deterministic > 0].is_current_target.mean(),
+            f'{split}_recall_det_micro': (results[results.is_current_target].action_target_score_deterministic > 0).mean(),
+        }
+        precision_recall = {
+            f'{t}/{split}_{p_or_r}{det}': (
+                results[
+                    (results.target==t) & (results.action_target_score > 0)].is_current_target.mean()
+                if p_or_r == 'precision' else
+                (results[
+                    (results.target==t) & results.is_current_target].action_target_score > 0).mean()
+            ) if det == '' else (
+                results[
+                    (results.target==t) &
+                    (results.action_target_score_deterministic > 0)].is_current_target.mean()
+                if p_or_r == 'precision' else
+                (results[
+                    (results.target==t) &
+                    results.is_current_target].action_target_score_deterministic > 0).mean()
+            )
+            for t in targets
+            for p_or_r in ['precision', 'recall']
+            for det in ['', '_det']
+        }
+        # return_dict[f'{split}_bce_loss'] = -torch.nn.functional.logsigmoid(torch.tensor(
+        #     results.apply(lambda r: r.action_target_score_deterministic if r.is_current_target else -r.action_target_score_deterministic, axis=1).to_numpy(),
+        #     dtype=torch.float)).mean()
+        return_dict[f'{split}_bce_loss_micro'] = nn.BCEWithLogitsLoss()(
+            torch.tensor(results.action_target_score_deterministic.to_numpy(), dtype=torch.float),
+            torch.tensor(results.is_current_target.to_numpy(), dtype=torch.float)).item()
+        if len(set(results.is_current_target)) > 1:
+            return_dict[f'{split}_auroc_micro'] = roc_auc_score(
+                results.is_current_target.to_numpy(),
+                results.action_target_score_deterministic.to_numpy())
+        for target in targets:
+            results_temp = results[results.target==target]
+            return_dict[f'{target}/{split}_bce_loss'] = nn.BCEWithLogitsLoss()(
+                torch.tensor(results_temp.action_target_score_deterministic.to_numpy(), dtype=torch.float),
+                torch.tensor(results_temp.is_current_target.to_numpy(), dtype=torch.float)).item()
+            if len(set(results.is_current_target)) > 1:
+                return_dict[f'{target}/{split}_auroc'] = roc_auc_score(
+                    results_temp.is_current_target.to_numpy(),
+                    results_temp.action_target_score_deterministic.to_numpy())
+        return_dict[f'{split}_bce_loss_macro'] = sum(
+            [return_dict[f'{target}/{split}_bce_loss'] for target in targets]) / len(targets)
+        if len(set(results.is_current_target)) > 1:
+            return_dict[f'{split}_auroc_macro'] = sum(
+                [return_dict[f'{target}/{split}_auroc'] for target in targets]) / len(targets)
+    precision_recall_macro = {
+        f'{split}_{p_or_r}{det}_macro': sum(
+            [precision_recall[f'{t}/{split}_{p_or_r}{det}'] for t in targets])
+            / len(targets)
+        for p_or_r in ['precision', 'recall']
+        for det in ['', '_det']
+    }
+    if actor is not None:
+        if actor.has_bias and actor.config.static_diagnoses is not None:
+            with torch.no_grad():
+                diagnosis_strings = list(
+                    actor.observation_embedder.diagnosis_mapping.keys())
+                static_bias = actor.get_static_bias(diagnosis_strings)
+                for diagnosis_string, params in zip(
+                        diagnosis_strings, static_bias):
+                    for i in range(params.shape[0]):
+                        return_dict[f'{diagnosis_string}_param{i}'] = params[i].item()
+    return_dict.update({
+        **precision_recall_micro,
+        **precision_recall_macro,
+        **precision_recall,
+    })
+    return return_dict

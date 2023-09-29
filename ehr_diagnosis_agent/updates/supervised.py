@@ -1,3 +1,4 @@
+from turtle import forward
 import torch
 import pandas as pd
 import io
@@ -17,10 +18,12 @@ def supervised_init(replay_buffer, env):
 
 
 def supervised_batch(args, replay_buffer, actor, env, index):
-    action_dists = [actor.get_dist(replay_buffer.observations[i])
-                    for i in index]
+    forward_pass_info = [actor(replay_buffer.observations[i]) for i in index]
+    action_dists = [
+        actor.parameters_to_dist(*info['params'])
+        for info in forward_pass_info]
     dist_entropy = actor.get_entropy(action_dists)
-    actions = [action_dist.rsample() for action_dist in action_dists]
+    actions = [info['action'] for info in forward_pass_info]
     # compute supervised loss
     supervised_loss = []
     for i, action in zip(index, actions):
@@ -46,10 +49,13 @@ def supervised_batch(args, replay_buffer, actor, env, index):
     actor_loss = supervised_loss - \
         args.supervised.entropy_coefficient * dist_entropy
     actor_loss = actor_loss.mean()
-    log_dict = {
-        'supervised_loss': supervised_loss.detach().mean().item(),
-        'dist_entropy': dist_entropy.detach().mean().item(),
-        'actor_loss_s': actor_loss.item(),
-    }
-    log_dict.update(actor.get_dist_stats(action_dists))
+    with torch.no_grad():
+        log_dict = {
+            'supervised_loss': supervised_loss.detach().mean().item(),
+            'dist_entropy': dist_entropy.detach().mean().item(),
+            'actor_loss_s': actor_loss.item(),
+        }
+        log_dict.update({
+            k: v.item()
+            for k, v in actor.get_dist_stats(forward_pass_info).items()})
     return actor_loss, log_dict

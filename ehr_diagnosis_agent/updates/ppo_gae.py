@@ -54,7 +54,10 @@ def ppo_gae_batch(args, replay_buffer, actor, critic, index, advantage, value_ta
         'batch_advantage': advantage[index].detach().mean().item(),
     }
     if not args.ppo_gae.only_train_critic:
-        action_dists = [actor.get_dist(replay_buffer.observations[i]) for i in index]
+        forward_pass_info = [actor(replay_buffer.observations[i]) for i in index]
+        action_dists = [
+            actor.parameters_to_dist(*info['params'])
+            for info in forward_pass_info]
         dist_entropy = actor.get_entropy(action_dists)
         action_log_prob = torch.stack(
             [dist.log_prob(replay_buffer.actions[i]).mean()
@@ -69,13 +72,16 @@ def ppo_gae_batch(args, replay_buffer, actor, critic, index, advantage, value_ta
         ppo_objective = torch.min(surr1, surr2)
         actor_loss = -ppo_objective - args.ppo_gae.entropy_coefficient * dist_entropy
         actor_loss = actor_loss.mean()
-        log_dict.update({
-            'ppo_objective': ppo_objective.detach().mean().item(),
-            'dist_entropy': dist_entropy.detach().mean().item(),
-            'ratio': ratios.detach().mean().item(),
-            'actor_loss_pg': actor_loss.item(),
-        })
-        log_dict.update(actor.get_dist_stats(action_dists))
+        with torch.no_grad():
+            log_dict.update({
+                'ppo_objective': ppo_objective.detach().mean().item(),
+                'dist_entropy': dist_entropy.detach().mean().item(),
+                'ratio': ratios.detach().mean().item(),
+                'actor_loss_pg': actor_loss.item(),
+            })
+            log_dict.update({
+                k: v.item()
+                for k, v in actor.get_dist_stats(forward_pass_info).items()})
     else:
         actor_loss = None
     # critic loss

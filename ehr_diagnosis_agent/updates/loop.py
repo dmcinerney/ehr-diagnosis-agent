@@ -6,6 +6,7 @@ from tqdm import tqdm
 import wandb
 from .supervised import supervised_init, supervised_batch
 from .ppo_gae import ppo_gae_init, ppo_gae_batch
+import warnings
 
 
 def update(
@@ -82,16 +83,22 @@ def update(
                     args, replay_buffer, actor, critic, index, advantage,
                     value_target)
                 log_dict.update(log_dict_pg)
-                # update critic
-                critic_loss.backward()
-                if make_update:
-                    if args.ppo_gae.use_grad_clip is not None:
-                        clip_grad_norm_(critic.parameters(), 0.5)
-                    critic_optimizer.step()
-                    critic_optimizer.zero_grad()
-                    log_dict['critic_lr'] = critic_scheduler.get_last_lr()[0]
-                    critic_scheduler.step()
-                    update_performed = True
+                if critic_loss.requires_grad:
+                    # update critic
+                    critic_loss.backward()
+                    if make_update:
+                        if args.ppo_gae.use_grad_clip is not None:
+                            clip_grad_norm_(critic.parameters(), 0.5)
+                        critic_optimizer.step()
+                        critic_optimizer.zero_grad()
+                        log_dict['critic_lr'] = \
+                            critic_scheduler.get_last_lr()[0]
+                        critic_scheduler.step()
+                        update_performed = True
+                else:
+                    warnings.warn(
+                        'Not able to backpropogate because there was no '
+                        f'evidence. ({batch_idx})')
             if use_supervised and use_ppo_gae and actor_loss_s is not None \
                     and actor_loss_pg is not None:
                 actor_loss = args.mix_objectives.coefficient * actor_loss_s \
@@ -104,15 +111,20 @@ def update(
                 raise Exception
             # update actor
             if actor_loss is not None:
-                actor_loss.backward()
-                if make_update:
-                    if args.ppo_gae.use_grad_clip is not None:
-                        clip_grad_norm_(actor.parameters(), 0.5)
-                    actor_optimizer.step()
-                    actor_optimizer.zero_grad()
-                    log_dict['actor_lr'] = actor_scheduler.get_last_lr()[0]
-                    actor_scheduler.step()
-                    update_performed = True
+                if actor_loss.requires_grad:
+                    actor_loss.backward()
+                    if make_update:
+                        if args.ppo_gae.use_grad_clip is not None:
+                            clip_grad_norm_(actor.parameters(), 0.5)
+                        actor_optimizer.step()
+                        actor_optimizer.zero_grad()
+                        log_dict['actor_lr'] = actor_scheduler.get_last_lr()[0]
+                        actor_scheduler.step()
+                        update_performed = True
+                else:
+                    warnings.warn(
+                        'Not able to backpropogate because there was no '
+                        f'evidence. ({batch_idx})')
                 log_dict['actor_loss'] = actor_loss.item()
             wandb.log(log_dict)
             if update_performed:

@@ -68,26 +68,23 @@ def episode_to_df(
                 o: (t, r) for o, t, r in next_info['true_positives']}
             options = pd.read_csv(io.StringIO(obs['options']))
             assert (options.type == 'diagnosis').all()
-            sorted_options = sort_by_scores(options.option.to_list(), action)
             option_targets = get_option_targets(
-                sorted_options, option_to_target, all_targets=all_targets,
-                env=env)
-            dist = actor.parameters_to_dist(*action_info['params'])
-            mean = actor.get_mean([dist])[0]
-            sorted_options_deterministic = sort_by_scores(
-                options.option.to_list(), mean)
-            option_targets_deterministic = get_option_targets(
-                sorted_options_deterministic, option_to_target,
+                options.option.to_list(), option_to_target,
                 all_targets=all_targets, env=env)
+            sorted_option_targets = sort_by_scores(option_targets, action)
+            dist = actor.parameters_to_dist(*action_info['params'])
+            action_det = actor.get_mean([dist])[0]
+            sorted_option_targets_deterministic = sort_by_scores(
+                option_targets, action_det)
             targets = info['current_targets'] if all_targets is None else \
                 all_targets
             for target in targets:
                 action_target_score = 0
                 action_target_score_deterministic = 0
-                for t, score, score_det in zip(option_targets, action, mean):
+                for t, score, score_det in zip(option_targets, action, action_det):
                     if target == t:
-                        action_target_score += score
-                        action_target_score_deterministic += score_det
+                        action_target_score += score.item()
+                        action_target_score_deterministic += score_det.item()
                 row = {
                     'time_step': t,
                     'target': target,
@@ -100,10 +97,10 @@ def episode_to_df(
                         action_target_score_deterministic,
                 }
                 row.update({
-                    f'top_{k}': target in option_targets[:k] for k in top_ks})
+                    f'top_{k}': target in sorted_option_targets[:k] for k in top_ks})
                 row.update({
                     f'top_{k}_deterministic':
-                        target in option_targets_deterministic[:k]
+                        target in sorted_option_targets_deterministic[:k]
                         for k in top_ks})
                 rows.append(row)
     episode_row['avg_reward'] = \
@@ -114,14 +111,17 @@ def episode_to_df(
 def evaluate_on_environment(
         env, actor, options=None, max_num_episodes=None,
         max_trajectory_length=None, custom_policy=None, filename=None,
-        use_random_start_idx=False):
+        use_random_start_idx=False, seed_offset=0):
     actor.eval()
     if filename is not None:
-        if os.path.exists(filename):
-            print(f'overwriting results at {filename}')
-            os.remove(filename)
-        else:
-            print(f'writing results to {filename}')
+        steps_filename = filename.replace('.csv', '_steps.csv')
+        episodes_filename = filename.replace('.csv', '_episodes.csv')
+        for x in [steps_filename, episodes_filename]:
+            if os.path.exists(x):
+                print(f'overwriting results at {x}')
+                os.remove(x)
+            else:
+                print(f'writing results to {x}')
     options = {} if options is None else dict(**options)
     num_examples = env.num_examples()
     steps_dfs = []
@@ -133,11 +133,11 @@ def evaluate_on_environment(
         for episode in pbar:
             options['instance_index'] = episode
             obs, info = env.reset(options=options)
-            if env.is_terminated(obs, info) or \
-                    env.is_truncated(obs, info):
+            if not info['is_valid_timestep']:
                 continue
             if use_random_start_idx:
-                obs, info = reset_at_random_idx(env, info, options=options)
+                obs, info = reset_at_random_idx(
+                    env, info, seed=episode + seed_offset, options=options)
             replay_buffer = ReplayBuffer()
             assert collect_episode(
                 env, actor, replay_buffer, obs, info,
@@ -156,10 +156,10 @@ def evaluate_on_environment(
                  'num_rows_collected': num_rows})
             if filename is not None:
                 steps_dfs[-1].to_csv(
-                    filename.replace('.csv', '_steps.csv'), index=False,
+                    steps_filename, index=False,
                     mode='a', header=len(steps_dfs) == 1)
                 pd.DataFrame(episodes_df[-1:]).to_csv(
-                    filename.replace('.csv', '_episodes.csv'), index=False,
+                    episodes_filename, index=False,
                     mode='a', header=len(episodes_df) == 1)
             if max_num_episodes is not None and \
                     len(steps_dfs) >= max_num_episodes:
@@ -201,6 +201,8 @@ def main():
         true_positive_minimum=args.env.true_positive_minimum,
         use_confident_diagnosis_mapping=
             args.env.use_confident_diagnosis_mapping,
+        skip_instances_with_gt_n_reports=
+            args.env.skip_instances_with_gt_n_reports,
     ) # type: ignore
     if args.env.reward_type not in recommended_reward_types[args.actor.type]:
         warnings.warn(
