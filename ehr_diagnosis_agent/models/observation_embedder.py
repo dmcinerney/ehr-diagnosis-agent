@@ -145,12 +145,9 @@ class ObservationEmbedder(nn.Module):
 
 class InterpretableObservationEmbedder(ObservationEmbedder):
     def forward(self, observation, ignore_report=False, ignore_evidence=False):
-        reports = pd.read_csv(io.StringIO(
-            observation['reports']), parse_dates=['date'])
         potential_diagnoses = pd.read_csv(io.StringIO(
             observation['options'])).apply(
             lambda r: f'{r.option} ({r.type})', axis=1).to_list()
-        last_report = reports.iloc[-1].text
         diagnosis_embeddings = self.get_diagnosis_embeddings(
             potential_diagnoses)
         context_strings = []
@@ -164,6 +161,9 @@ class InterpretableObservationEmbedder(ObservationEmbedder):
             assert observation['evidence'].strip() != '' or \
                 self.diagnosis_bias_vector is not None
         else:
+            reports = pd.read_csv(io.StringIO(
+                observation['reports']), parse_dates=['date'])
+            last_report = reports.iloc[-1].text
             context_strings.append(last_report)
             context_info.append('report')
             context_embeddings.append(
@@ -201,12 +201,9 @@ class InterpretableObservationEmbedder(ObservationEmbedder):
 
 class BertObservationEmbedder(ObservationEmbedder):
     def forward(self, observation, ignore_report=False, ignore_evidence=False):
-        reports = pd.read_csv(io.StringIO(
-            observation['reports']), parse_dates=['date'])
         potential_diagnoses = pd.read_csv(io.StringIO(
             observation['options'])).apply(
             lambda r: f'{r.option} ({r.type})', axis=1).to_list()
-        last_report = reports.iloc[-1].text
         diagnosis_embeddings = self.get_diagnosis_embeddings(
             potential_diagnoses)
         context_strings = []
@@ -220,6 +217,9 @@ class BertObservationEmbedder(ObservationEmbedder):
             assert observation['evidence'].strip() != '' or \
                 self.diagnosis_bias_vector is not None
         else:
+            reports = pd.read_csv(io.StringIO(
+                observation['reports']), parse_dates=['date'])
+            last_report = reports.iloc[-1].text
             context_strings.append(last_report)
             context_info.append('report')
         if not ignore_evidence and observation['evidence'].strip() != '':
