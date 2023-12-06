@@ -1,5 +1,5 @@
 from torch import nn
-from transformers import AutoTokenizer, AutoModel
+from transformers import AutoTokenizer, AutoModel, LongformerModel
 import pandas as pd
 import io
 import torch
@@ -30,8 +30,9 @@ class ObservationEmbedder(nn.Module):
             self.diagnosis_mapping = {
                 diagnosis: idx for idx, diagnosis in enumerate(
                     self.config.static_diagnoses)}
-        self.tokenizer.model_max_length = \
-            self.context_encoder.config.max_position_embeddings
+        if self.config.model_name == 'emilyalsentzer/Bio_ClinicalBERT':
+            self.tokenizer.model_max_length = \
+                self.context_encoder.config.max_position_embeddings
         self.device = 'cpu'
         dim = self.context_encoder.config.hidden_size
         self.diagnosis_bias_vector = nn.Parameter(torch.randn(dim)) \
@@ -43,10 +44,19 @@ class ObservationEmbedder(nn.Module):
         self.to(device)
 
     def tokenize(self, inputs):
-        return self.tokenizer(inputs, truncation=True, padding=True, return_tensors='pt').to(self.device)
+        return self.tokenizer(
+            inputs, truncation=True, padding=True, return_tensors='pt').to(
+                self.device)
 
     def embed(self, model, inputs):
         input_tensors = self.tokenize(inputs)
+        if isinstance(model, LongformerModel):
+            global_attention_mask = torch.zeros_like(
+                input_tensors['input_ids'])
+            # global attention on cls token
+            global_attention_mask[:, 0] = 1
+            print('using global attention')
+            input_tensors['global_attention_mask'] = global_attention_mask
         keys = list(input_tensors.keys())
         args = [input_tensors[k]for k in keys]
         example_param = next(iter(model.parameters()))
@@ -58,7 +68,8 @@ class ObservationEmbedder(nn.Module):
                 run_model, model, example_param, keys, *args)
 
     def batch_embed(self, model, inputs):
-        batch_size = self.config.embedding_batch_size if self.config.embedding_batch_size is not None else len(inputs)
+        batch_size = self.config.embedding_batch_size \
+            if self.config.embedding_batch_size is not None else len(inputs)
         all_embeddings = []
         for offset in range(0, len(inputs), batch_size):
             embeddings = self.embed(model, inputs[offset:offset + batch_size])
@@ -67,7 +78,8 @@ class ObservationEmbedder(nn.Module):
 
     def get_diagnosis_embeddings(self, potential_diagnoses):
         if self.config.static_diagnoses is None:
-            return self.batch_embed(self.diagnosis_encoder, potential_diagnoses)
+            return self.batch_embed(
+                self.diagnosis_encoder, potential_diagnoses)
         else:
             return self.diagnosis_embeddings(
                 torch.tensor(
@@ -231,9 +243,13 @@ class BertObservationEmbedder(ObservationEmbedder):
                     'evidence (report {})'.format(x['report_idx'])
                     for x in evidence_metadata]
         offset = 0 if self.diagnosis_bias_vector is None else 1
-        context_strings = context_strings[:offset] + ['\n\n'.join(context_strings[offset:])]
-        context_info = context_info[:offset] + [' | '.join(context_info[offset:])]
+        context_strings = context_strings[:offset] + [
+            '\n\n'.join(context_strings[offset:])]
+        context_info = context_info[:offset] + [
+            ' | '.join(context_info[offset:])]
         context_embeddings.append(self.batch_embed(
             self.context_encoder, context_strings[-1:]))
+        context_embeddings = torch.cat(context_embeddings) \
+            if len(context_embeddings) > 1 else context_embeddings[0]
         return diagnosis_embeddings, context_embeddings, potential_diagnoses, \
             context_strings, context_info

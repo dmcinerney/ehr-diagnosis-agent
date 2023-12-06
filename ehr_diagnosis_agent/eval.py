@@ -225,7 +225,7 @@ def main():
         options['max_reports_considered'] = args.data.max_reports_considered
     path = '/'.join(args.eval.checkpoint.split('/')[:-1])
     filename = f'full_{args.eval.split}_metrics_' + args.eval.checkpoint.split(
-        '/')[-1][:-3] + '.csv'
+        '/')[-1][:-3] + f'_seed={args.eval.seed_offset}' + '.csv'
     evaluate_on_environment(
         env, actor, options=options,
         max_num_episodes=args.eval.max_num_episodes,
@@ -234,7 +234,8 @@ def main():
             args.eval.random_query_policy,
             args.eval.random_rp_policy),
         filename=os.path.join(path, filename),
-        use_random_start_idx=args.eval.use_random_start_idx)
+        use_random_start_idx=args.eval.use_random_start_idx,
+        seed_offset=args.eval.seed_offset)
 
 
 if __name__ == '__main__':

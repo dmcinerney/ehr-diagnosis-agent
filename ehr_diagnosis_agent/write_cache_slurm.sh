@@ -1,8 +1,8 @@
 offset=0
 #njobs=200
 #split=train
-njobs=25
-split=val2
+njobs=40
+split=test
 jobsize=175
 cache_evidence=true
 for (( k = 0; k < njobs; ++k )); do

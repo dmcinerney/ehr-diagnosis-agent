@@ -22,7 +22,7 @@ training:
   limit_val_size: null
   train_subset_file: train_subset.pkl
   resume_from: null
-  num_epochs: 1200
+  num_epochs: 600
   # num_episodes: 64
   num_episodes: 512
   batch_size: 1
@@ -68,6 +68,7 @@ eval:
   random_query_policy: true
   random_rp_policy: false
   use_random_start_idx: true
+  seed_offset: 0
   checkpoint: /scratch/mcinerney.de/ehr-diagnosis-agent-output/wandb/run-20230812_004109-oomrpc0z/files/ckpt_epoch=65_updates=3107.pt
 mix_objectives:
   coefficient: .5 # represents the proportion of the supervised objective
@@ -103,6 +104,8 @@ env:
   true_positive_minimum: 0
   train_cache_path: /work/frink/mcinerney.de/ehr-diagnosis-agent/ehr_diagnosis_agent/.cache/env_train_cache_2
   val1_cache_path: /work/frink/mcinerney.de/ehr-diagnosis-agent/ehr_diagnosis_agent/.cache/env_val1_cache_2
+  val2_cache_path: /work/frink/mcinerney.de/ehr-diagnosis-agent/ehr_diagnosis_agent/.cache/env_val2_cache_2
+  test_cache_path: /work/frink/mcinerney.de/ehr-diagnosis-agent/ehr_diagnosis_agent/.cache/env_test_cache_2
   top_k_evidence: 100
   # add_risk_factor_queries: false
   add_risk_factor_queries: true
@@ -111,7 +114,6 @@ env:
   add_none_of_the_above_option: false
   use_confident_diagnosis_mapping: true
   skip_instances_with_gt_n_reports: 200
-  exclude_evidence: false
 actor:
   # type: normal
   # type: dirichlet
