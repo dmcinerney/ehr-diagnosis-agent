@@ -8,6 +8,7 @@ import pandas as pd
 import io
 from torch import nn
 from sklearn.metrics import roc_auc_score
+import os
 
 
 def get_args(config_file):
@@ -238,33 +239,33 @@ class TqdmSpy(tqdm):
         self.__n = value
 
 
-def log_results(reward_type, results, split, actor=None):
+def log_results(reward_type, results, split, actor=None, suffix=''):
     return_dict = {}
     # for these metrics limit to targets that appear in the options list
     results = results[results.is_positive]
     targets = set(results.target)
     if reward_type in ['continuous_dependent', 'ranking']:
         precision_recall_micro = {
-            f'{split}_precision_micro': results[results.top_1].is_current_target.mean(),
-            f'{split}_recall_micro': results[results.is_current_target].top_1.mean(),
-            f'{split}_precision_det_micro': results[results.top_1_deterministic].is_current_target.mean(),
-            f'{split}_recall_det_micro': results[results.is_current_target].top_1_deterministic.mean(),
+            f'{split}_precision_micro': results[results['top_1' + suffix]].is_current_target.mean(),
+            f'{split}_recall_micro': results[results.is_current_target]['top_1' + suffix].mean(),
+            f'{split}_precision_det_micro': results[results['top_1_deterministic' + suffix]].is_current_target.mean(),
+            f'{split}_recall_det_micro': results[results.is_current_target]['top_1_deterministic' + suffix].mean(),
         }
         precision_recall = {
             f'{t}/{split}_{p_or_r}{det}': (
                 results[
-                    (results.target==t) & results.top_1].is_current_target.mean()
+                    (results.target==t) & results['top_1' + suffix]].is_current_target.mean()
                 if p_or_r == 'precision' else
                 results[
-                    (results.target==t) & results.is_current_target].top_1.mean()
+                    (results.target==t) & results.is_current_target]['top_1' + suffix].mean()
             ) if det == '' else (
                 results[
                     (results.target==t) &
-                    results.top_1_deterministic].is_current_target.mean()
+                    results['top_1_deterministic' + suffix]].is_current_target.mean()
                 if p_or_r == 'precision' else
                 results[
                     (results.target==t) &
-                    results.is_current_target].top_1_deterministic.mean()
+                    results.is_current_target]['top_1_deterministic' + suffix].mean()
             )
             for t in targets
             for p_or_r in ['precision', 'recall']
@@ -272,26 +273,26 @@ def log_results(reward_type, results, split, actor=None):
         }
     else:
         precision_recall_micro = {
-            f'{split}_precision_micro': results[results.action_target_score > 0].is_current_target.mean(),
-            f'{split}_recall_micro': (results[results.is_current_target].action_target_score > 0).mean(),
-            f'{split}_precision_det_micro': results[results.action_target_score_deterministic > 0].is_current_target.mean(),
-            f'{split}_recall_det_micro': (results[results.is_current_target].action_target_score_deterministic > 0).mean(),
+            f'{split}_precision_micro': results[results['action_target_score' + suffix] > 0].is_current_target.mean(),
+            f'{split}_recall_micro': (results[results.is_current_target]['action_target_score' + suffix] > 0).mean(),
+            f'{split}_precision_det_micro': results[results['action_target_score_deterministic' + suffix] > 0].is_current_target.mean(),
+            f'{split}_recall_det_micro': (results[results.is_current_target]['action_target_score_deterministic' + suffix] > 0).mean(),
         }
         precision_recall = {
             f'{t}/{split}_{p_or_r}{det}': (
                 results[
-                    (results.target==t) & (results.action_target_score > 0)].is_current_target.mean()
+                    (results.target==t) & (results['action_target_score' + suffix] > 0)].is_current_target.mean()
                 if p_or_r == 'precision' else
                 (results[
-                    (results.target==t) & results.is_current_target].action_target_score > 0).mean()
+                    (results.target==t) & results.is_current_target]['action_target_score' + suffix] > 0).mean()
             ) if det == '' else (
                 results[
                     (results.target==t) &
-                    (results.action_target_score_deterministic > 0)].is_current_target.mean()
+                    (results['action_target_score_deterministic' + suffix] > 0)].is_current_target.mean()
                 if p_or_r == 'precision' else
                 (results[
                     (results.target==t) &
-                    results.is_current_target].action_target_score_deterministic > 0).mean()
+                    results.is_current_target]['action_target_score_deterministic' + suffix] > 0).mean()
             )
             for t in targets
             for p_or_r in ['precision', 'recall']
@@ -301,21 +302,21 @@ def log_results(reward_type, results, split, actor=None):
         #     results.apply(lambda r: r.action_target_score_deterministic if r.is_current_target else -r.action_target_score_deterministic, axis=1).to_numpy(),
         #     dtype=torch.float)).mean()
         return_dict[f'{split}_bce_loss_micro'] = nn.BCEWithLogitsLoss()(
-            torch.tensor(results.action_target_score_deterministic.to_numpy(), dtype=torch.float),
+            torch.tensor(results['action_target_score_deterministic' + suffix].to_numpy(), dtype=torch.float),
             torch.tensor(results.is_current_target.to_numpy(), dtype=torch.float)).item()
         if len(set(results.is_current_target)) > 1:
             return_dict[f'{split}_auroc_micro'] = roc_auc_score(
                 results.is_current_target.to_numpy(),
-                results.action_target_score_deterministic.to_numpy())
+                results['action_target_score_deterministic' + suffix].to_numpy())
         for target in targets:
             results_temp = results[results.target==target]
             return_dict[f'{target}/{split}_bce_loss'] = nn.BCEWithLogitsLoss()(
-                torch.tensor(results_temp.action_target_score_deterministic.to_numpy(), dtype=torch.float),
+                torch.tensor(results_temp['action_target_score_deterministic' + suffix].to_numpy(), dtype=torch.float),
                 torch.tensor(results_temp.is_current_target.to_numpy(), dtype=torch.float)).item()
             if len(set(results.is_current_target)) > 1:
                 return_dict[f'{target}/{split}_auroc'] = roc_auc_score(
                     results_temp.is_current_target.to_numpy(),
-                    results_temp.action_target_score_deterministic.to_numpy())
+                    results_temp['action_target_score_deterministic' + suffix].to_numpy())
         return_dict[f'{split}_bce_loss_macro'] = sum(
             [return_dict[f'{target}/{split}_bce_loss'] for target in targets]) / len(targets)
         if len(set(results.is_current_target)) > 1:
@@ -344,3 +345,24 @@ def log_results(reward_type, results, split, actor=None):
         **precision_recall,
     })
     return return_dict
+
+
+def get_mimic_demographics(mimic_folder):
+    patients = pd.read_csv(os.path.join(mimic_folder, 'PATIENTS.csv'))
+    patients = patients[['SUBJECT_ID', 'GENDER']].drop_duplicates(
+        ['SUBJECT_ID'])
+    admissions = pd.read_csv(os.path.join(mimic_folder, 'ADMISSIONS.csv'))
+    admissions = admissions[
+        # ['SUBJECT_ID', 'LANGUAGE', 'RELIGION', 'MARITAL_STATUS', 'ETHNICITY']
+        ['SUBJECT_ID', 'ETHNICITY']
+        ].drop_duplicates(['SUBJECT_ID'])
+    df = patients.merge(admissions, on="SUBJECT_ID")
+    df['race'] = df['ETHNICITY'].apply(
+        lambda x: 'ASIAN' if 'ASIAN' in x else
+            'HISPANIC' if 'HISPANIC' in x else
+            'NATIVE AMERICAN/ALASKAN' if 'NATIVE' in x else
+            'BLACK' if 'BLACK' in x else
+            'WHITE' if 'WHITE' in x else "")
+    del df['ETHNICITY']
+    return df.rename(
+        columns={'GENDER': 'gender', 'SUBJECT_ID': 'patient_id'})

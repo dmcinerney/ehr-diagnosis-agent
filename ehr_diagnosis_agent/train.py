@@ -59,10 +59,10 @@ def main():
     fmm_interface = SentenceTransformer(args.env.fmm_name) \
         if args.env.fmm_name is not None else None
     if args.training.train_subset_file is None:
-        subset = None
+        train_subset = None
     else:
         with open(args.training.train_subset_file, 'rb') as f:
-            subset = pkl.load(f)
+            train_subset = pkl.load(f)
     train_env: EHRDiagnosisEnv = gymnasium.make(
         'ehr_diagnosis_env/EHRDiagnosisEnv-v0',
         instances=train_df,
@@ -82,9 +82,14 @@ def main():
             args.env.use_confident_diagnosis_mapping,
         skip_instances_with_gt_n_reports=
             args.env.skip_instances_with_gt_n_reports,
-        subset=subset,
+        subset=train_subset,
     ) # type: ignore
     if args.training.val_every is not None:
+        if args.training.val_subset_file is None:
+            val_subset = None
+        else:
+            with open(args.training.val_subset_file, 'rb') as f:
+                val_subset = pkl.load(f)
         print('loading validation dataset...')
         val_df = pd.read_csv(os.path.join(
             args.data.path, args.data.dataset, 'val1.data'), compression='gzip')
@@ -113,6 +118,7 @@ def main():
                 args.env.use_confident_diagnosis_mapping,
             skip_instances_with_gt_n_reports=
                 args.env.skip_instances_with_gt_n_reports,
+            subset=val_subset,
         ) # type: ignore
     else:
         val_env = None
@@ -122,6 +128,7 @@ def main():
             args.env.reward_type, args.actor.type))
     actor_params = args.actor['{}_params'.format(args.actor.type)]
     actor_params.update(args.actor['shared_params'])
+    actor_params['static_bias_params'] = actor_params['train_static_bias_params']
     actor = actor_types[args.actor.type](actor_params)
     actor.set_device('cuda')
     if actor.has_bias and actor.config.static_diagnoses is not None:
@@ -191,7 +198,8 @@ def main():
             results_file = os.path.join(
                 run.dir, 'val_metrics_ckpt_epoch={}_updates={}.csv'.format(
                     epoch, updates))
-            step_results, episode_results = evaluate_on_environment(
+            evidence_results, step_results, episode_results = \
+                evaluate_on_environment(
                 val_env, actor, options=options,
                 max_num_episodes=args.training.val_max_num_episodes,
                 max_trajectory_length=args.training.val_max_trajectory_length,
@@ -211,7 +219,8 @@ def main():
             results_file = os.path.join(
                 run.dir, 'train_metrics_ckpt_epoch={}_updates={}.csv'.format(
                     epoch, updates))
-            step_results, episode_results = evaluate_on_environment(
+            evidence_results, step_results, episode_results = \
+                evaluate_on_environment(
                 train_env, actor, options=dict(add_to_seen=False, **options),
                 max_num_episodes=args.training.trainmetrics_max_num_episodes,
                 max_trajectory_length=

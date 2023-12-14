@@ -85,7 +85,9 @@ class Actor(nn.Module):
         return {
             'action': action,
             'log_prob': dist.log_prob(action),
+            'diagnosis_strings': vote_info['diagnosis_strings'],
             'context_strings': vote_info['context_strings'],
+            'context_info': vote_info['context_info'],
             **param_info,
         }
 
@@ -110,29 +112,30 @@ class Actor(nn.Module):
         """
         param_votes = vote_info['param_votes']
         static_bias = self.get_static_bias(vote_info['diagnosis_strings'])
-        param_info = {}
+        param_info = {'param_votes': param_votes}
         if self.has_bias:
             if self.config.static_diagnoses is None:
+                assert static_bias is None
                 param_info['bias'] = param_votes[:, 0]
             else:
                 assert static_bias is not None
                 param_info['bias'] = static_bias
         if self.attention is None:
             if self.has_bias and self.config.separate_bias and \
-                    self.config.static_diagnoses is None:
-                params = param_votes[:, 0]
-                if param_votes.shape[1] > 1:
-                    params = params / self.config.constant_denominator \
-                        + param_votes[:, 1:].mean(1)
+                    self.config.static_diagnoses is None and \
+                    param_votes.shape[1] > 1:
+                param_info['evidence_votes'] = param_votes[:, 1:]
+                param_info['num_evidence'] = param_votes.shape[1] - 1
             else:
-                params = param_votes.mean(1)
-            if static_bias is not None:
-                if vote_info['context_info'][0] == 'no evidence':
-                    params = static_bias
-                else:
-                    params = params / self.config.constant_denominator \
-                        + static_bias
-            param_info['params'] = params
+                param_info['evidence_votes'] = param_votes
+                param_info['num_evidence'] = param_votes.shape[1]
+            if static_bias is not None and \
+                    vote_info['context_info'][0] == 'no evidence':
+                del param_info['evidence_votes']
+                param_info['num_evidence'] = 0
+            if 'evidence_votes' in param_info.keys():
+                param_info['evidence_contribution'] = \
+                    param_info['evidence_votes'].mean(1)
         else:
             diagnosis_embeddings = vote_info['diagnosis_embeddings']
             context_embeddings = vote_info['context_embeddings']
@@ -155,26 +158,30 @@ class Actor(nn.Module):
                         query=diagnosis_embeddings,
                         key=context_embeddings[1:],
                         value=param_votes[1:])
-                    # add the bias
-                    params = attn_output.squeeze(0) / \
-                        self.config.constant_denominator + param_votes[0]
-                else:
-                    params = param_votes[0]
+                    param_info['evidence_contribution'] = \
+                        attn_output.squeeze(0)
+                    param_info['context_attn_weights'] = \
+                        attn_output_weights.squeeze(1)
             else:
                 # attn_output (1, num_diagnoses, vdim), attn_output_weights
                 #   (num_diagnoses, 1, num_contexts)
                 attn_output, attn_output_weights = self.attention(
                     query=diagnosis_embeddings, key=context_embeddings,
                     value=param_votes)
-                params = attn_output.squeeze(0)
-            if static_bias is not None:
-                if vote_info['context_info'][0] == 'no evidence':
-                    params = static_bias
-                else:
-                    params = params / self.config.constant_denominator \
-                        + static_bias
-            param_info['params'] = params
-            param_info['context_attn_weights'] = attn_output_weights.squeeze(1)
+                param_info['evidence_contribution'] = \
+                    attn_output.squeeze(0)
+                param_info['context_attn_weights'] = \
+                    attn_output_weights.squeeze(1)
+            if static_bias is not None and \
+                    vote_info['context_info'][0] == 'no evidence':
+                del param_info['evidence_contribution']
+        params = 0
+        if 'bias' in param_info.keys():
+            params += param_info['bias']
+        if 'evidence_contribution' in param_info.keys():
+            params += param_info['evidence_contribution'] \
+                / self.config.constant_denominator
+        param_info['params'] = params
         return self.transform_parameters(param_info)
 
     def get_dist_parameters(self, observation):

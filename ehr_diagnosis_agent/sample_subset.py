@@ -2,7 +2,7 @@ import ehr_diagnosis_env
 from ehr_diagnosis_env.envs import EHRDiagnosisEnv
 import gymnasium
 from torch import negative_
-from utils import get_args
+from utils import get_args, get_mimic_demographics
 import pandas as pd
 import os
 from tqdm import trange, tqdm
@@ -37,27 +37,41 @@ def main():
             args.env.use_confident_diagnosis_mapping,
     ) # type: ignore
     instances = env.get_cached_instance_dataframe()
-    positive_filter = instances.apply(
-        lambda r: r['is valid timestep'] is not None and \
-            r['is valid timestep'] == r['is valid timestep'] and \
-            sum(r['is valid timestep']) > 0 and \
-            len(r['target diagnosis countdown'][0]) > 0, axis=1)
-    positive_instances = instances.index[positive_filter]
-    negative_filter = instances.apply(
-        lambda r: r['is valid timestep'] is not None and \
-            r['is valid timestep'] == r['is valid timestep'] and \
-            sum(r['is valid timestep']) > 0 and \
-            len(r['target diagnosis countdown'][0]) == 0, axis=1)
-    negative_instances = instances.index[negative_filter]
-    np.random.seed(args.sample_subset.seed)
-    num_negatives = int(len(positive_instances) *
-        args.sample_subset.negatives_percentage /
-        (1 - args.sample_subset.negatives_percentage))
-    sampled_negatives = np.random.choice(
-        negative_instances, size=num_negatives)
-    instances_subset = set(positive_instances).union(set(sampled_negatives))
+    instances = pd.concat([df, instances], axis=1)
+    if args.sample_subset.gender is not None or \
+            args.sample_subset.race is not None:
+        instances = instances.merge(get_mimic_demographics(
+            args.data.mimic_folder_for_demographics), on="patient_id")
+    if args.sample_subset.gender is not None:
+        instances = instances[instances.gender == args.sample_subset.gender]
+    if args.sample_subset.race is not None:
+        instances = instances[instances.race == args.sample_subset.race]
+    if args.sample_subset.negatives_percentage is not None:
+        positive_filter = instances.apply(
+            lambda r: r['is valid timestep'] is not None and \
+                r['is valid timestep'] == r['is valid timestep'] and \
+                sum(r['is valid timestep']) > 0 and \
+                len(r['target diagnosis countdown'][0]) > 0, axis=1)
+        positive_instances = instances[positive_filter]
+        negative_filter = instances.apply(
+            lambda r: r['is valid timestep'] is not None and \
+                r['is valid timestep'] == r['is valid timestep'] and \
+                sum(r['is valid timestep']) > 0 and \
+                len(r['target diagnosis countdown'][0]) == 0, axis=1)
+        negative_instances = instances[negative_filter]
+        np.random.seed(args.sample_subset.seed)
+        num_negatives = int(len(positive_instances) *
+            args.sample_subset.negatives_percentage /
+            (1 - args.sample_subset.negatives_percentage))
+        #sampled_negatives = np.random.choice(
+        #    negative_instances, size=num_negatives)
+        #instances = set(positive_instances).union(set(sampled_negatives))
+        sampled_negatives = negative_instances.sample(n=num_negatives)
+        instances = pd.concat([positive_instances, sampled_negatives])
+    instance_indices = set(sorted(list(instances.index)))
     with open(args.sample_subset.subset_file, 'wb') as f:
-        pkl.dump(instances_subset, f)
+        pkl.dump(instance_indices, f)
+    print('done')
 
 
 if __name__ == '__main__':
