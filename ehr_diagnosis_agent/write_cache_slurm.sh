@@ -1,10 +1,10 @@
 offset=0
-njobs=200
-split=train
-subset=train_subset_white.pkl
-#njobs=20
-#split=val1
-#subset=null
+# njobs=200
+# split=train
+# subset=null
+njobs=20
+split=val1
+subset=null
 jobsize=175
 cache_evidence=true
 for (( k = 0; k < njobs; ++k )); do
