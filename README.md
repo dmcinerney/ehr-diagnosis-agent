@@ -1,4 +1,4 @@
-# ehr-diagnosis-agent
+# EHR Diagnosis Agent
 
 This repository can be used for training and testing models for risk prediction with electronic health records by building on top of the ehr-diagnosis-env environment:
 
