@@ -17,7 +17,7 @@ def main():
         args.data.path, args.data.dataset,
         f'{args.sample_subset.split}.data'), compression='gzip')
     print(f'length={len(df)}')
-        env_args = dict(**args.env['other_args'])
+    env_args = dict(**args.env['other_args'])
     env_args.update(
         instances=eval_df,
         cache_path=args.env[f'{args.eval.split}_cache_path'],
