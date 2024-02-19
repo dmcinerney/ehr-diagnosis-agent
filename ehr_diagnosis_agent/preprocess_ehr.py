@@ -1,12 +1,13 @@
 from argparse import ArgumentParser
 from data.preprocess_mimic import preprocess_mimic
+from data.preprocess_bwh import preprocess_bwh
 import pandas as pd
 import os
 import random
 from tqdm import tqdm
 
 
-def create_dataset(reports, codes, path):
+def create_dataset(path, reports, codes=None):
     if os.path.exists(path):
         raise Exception
     os.mkdir(path)
@@ -22,20 +23,22 @@ def create_dataset(reports, codes, path):
         'train': patient_ids[:div1],
     }
     reports = reports.sort_values('date')
-    codes = codes.sort_values('date')
+    if codes is not None:
+        codes = codes.sort_values('date')
     for split, split_patient_ids in splits.items():
         rows = []
         for patient_id in tqdm(split_patient_ids, total=len(split_patient_ids), desc=split):
             report_rows = reports[reports.patient_id == patient_id]
-            code_rows = codes[codes.patient_id == patient_id]
             rows.append({
                 'patient_id': patient_id,
                 'reports': report_rows.to_csv(index=False),
-                'codes': code_rows.to_csv(index=False),
                 'start_date': report_rows.iloc[0].date,
                 'end_date': report_rows.iloc[-1].date,
                 'num_reports': len(report_rows),
             })
+            if codes is not None:
+                code_rows = codes[codes.patient_id == patient_id]
+                rows[-1]['codes'] = code_rows.to_csv(index=False)
             if 'hadm_id' in report_rows.columns:
                 rows[-1]['num_admissions'] = len(set(report_rows.hadm_id))
         df = pd.DataFrame(rows)
@@ -53,6 +56,8 @@ if __name__ == '__main__':
         print(f'preprocessing {args.data_type} at {args.data_path}')
         if args.data_type == 'mimic':
             preprocess_mimic(args.data_path)
+        if args.data_type == 'bwh':
+            preprocess_bwh(args.data_path)
         else:
             raise Exception('Data type does not exist!')
     if os.path.exists(os.path.join(processed_path, args.dataset_name)):
@@ -61,5 +66,10 @@ if __name__ == '__main__':
     else:
         print(f'creating a {args.data_type} dataset called {args.dataset_name} at {args.data_path}')
         reports = pd.read_csv(os.path.join(processed_path, 'medical_reports.csv'), parse_dates=['date'])
-        codes = pd.read_csv(os.path.join(processed_path, 'medical_codes.csv'), parse_dates=['date'])
-        create_dataset(reports, codes, os.path.join(processed_path, args.dataset_name))
+        if os.path.exists(os.path.join(processed_path, 'medical_codes.csv')):
+            codes = pd.read_csv(os.path.join(processed_path, 'medical_codes.csv'), parse_dates=['date'])
+        else:
+            codes = None
+        create_dataset(
+            os.path.join(processed_path, args.dataset_name),
+            reports, codes=codes)

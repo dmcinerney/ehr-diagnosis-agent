@@ -1,16 +1,17 @@
-output_dir: /scratch/mcinerney.de/ehr-diagnosis-agent-output
+output_dir: /PHShome/dzm44/code/ehr-diagnosis-agent/ehr_diagnosis_agent/outputs
 data:
-  path: /work/frink/mcinerney.de/datasets/mimic-iii/physionet.org/files/mimiciii/1.4/preprocessed
-  dataset: reports_and_codes3
+  path: /PHShome/dzm44/data/Dataset_8-1-2023/preprocessed
+  dataset: bwh_er_data
   max_reports_considered: null
   #max_reports_considered: 64
-  mimic_folder_for_demographics: /work/frink/mcinerney.de/datasets/mimic-iii/physionet.org/files/mimiciii/1.4/
+  mimic_folder_for_demographics: /PHShome/dzm44/data/Dataset_8-1-2023
 write_to_cache:
   slice: '10000,20000'
   split: train
   run_through_episode: false
   subset_file: null
-  cache_dir: /work/frink/mcinerney.de/ehr-diagnosis-agent/ehr_diagnosis_agent/.cache/env_train_cache_2
+  max_observed_reports: 20
+  cache_dir: /PHShome/dzm44/code/ehr-diagnosis-agent/ehr_diagnosis_agent/.cache/env_train_cache_2
 sample_subset:
   split: train
   subset_file: train_subset.pkl
@@ -18,10 +19,12 @@ sample_subset:
   gender: null
   race: null
   seed: 0
+device: cuda
 training:
   limit_train_size: null
   limit_val_size: null
-  train_subset_file: train_subset.pkl
+  # train_subset_file: train_subset.pkl
+  train_subset_file: null
   val_subset_file: null
   resume_from: null
   num_epochs: 600
@@ -49,18 +52,23 @@ training:
   # shape_reward_with_attn: true
   val_every: 5
   trainmetrics_every: 5
-  random_query_policy: true
-  random_rp_policy: true
-  eval_random_query_policy: true
-  eval_random_rp_policy: false
-  val_max_num_episodes: 300
-  trainmetrics_max_num_episodes: 300
+  query_policy: 'zeros'
+  rp_policy: 'zeros'
+  eval_query_policy: 'zeros'
+  eval_rp_policy: null
+  # val_max_num_episodes: 300
+  # trainmetrics_max_num_episodes: 300
+  val_max_num_episodes: 1
+  trainmetrics_max_num_episodes: 1
   max_trajectory_length: 2
   val_max_trajectory_length: 2
   trainmetrics_max_trajectory_length: 2
   use_random_start_idx: true
   eval_val_use_random_start_idx: true
   eval_train_use_random_start_idx: true
+  max_observed_reports: 20
+  eval_val_max_observed_reports: 20
+  eval_train_max_observed_reports: 20
 eval:
   split: val1
   limit_eval_size: null
@@ -70,8 +78,9 @@ eval:
   random_query_policy: true
   random_rp_policy: false
   use_random_start_idx: true
+  max_observed_reports: 20
   seed_offset: 0
-  checkpoint: /scratch/mcinerney.de/ehr-diagnosis-agent-output/wandb/run-20230812_004109-oomrpc0z/files/ckpt_epoch=65_updates=3107.pt
+  checkpoint: /PHShome/dzm44/code/ehr-diagnosis-agent/ehr_diagnosis_agent/outputs/wandb/run-20230812_004109-oomrpc0z/files/ckpt_epoch=65_updates=3107.pt
 mix_objectives:
   coefficient: .5 # represents the proportion of the supervised objective
 ppo_gae:
@@ -98,47 +107,65 @@ supervised:
 ppo_dae:
   epsilon: .5
 env:
-  llm_name: 'google/flan-t5-xxl'
-  fmm_name: 'all-MiniLM-L6-v2'
+  # env_type: EHRDiagnosisEnv-v0
+  env_type: FlanEHRDiagnosisEnv-v0
+  # env_type: MistralEHRDiagnosisEnv-v0
+  # llm_name: 'google/flan-t5-xxl'
+  llm_name: '/PHShome/dzm44/models/flan-t5-xxl'
+  # llm_name: 'mistralai/Mistral-7B-Instruct-v0.2'
+  # llm_name: '/PHShome/dzm44/models/models--mistralai--Mistral-7B-Instruct-v0.2'
+  # fmm_name: 'all-MiniLM-L6-v2'
+  fmm_name: '/PHShome/dzm44/models/all-MiniLM-L6-v2'
+  train_cache_path: /PHShome/dzm44/code/ehr-diagnosis-agent/ehr_diagnosis_agent/.cache/env_train_cache_flan_2
+  val1_cache_path: /PHShome/dzm44/code/ehr-diagnosis-agent/ehr_diagnosis_agent/.cache/env_val1_cache_flan_2
+  val2_cache_path: /PHShome/dzm44/code/ehr-diagnosis-agent/ehr_diagnosis_agent/.cache/env_val2_cache_flan_2
+  test_cache_path: /PHShome/dzm44/code/ehr-diagnosis-agent/ehr_diagnosis_agent/.cache/env_test_cache_flan_2
+  # train_cache_path: /PHShome/dzm44/code/ehr-diagnosis-agent/ehr_diagnosis_agent/.cache/env_train_cache_mistral_2
+  # val1_cache_path: /PHShome/dzm44/code/ehr-diagnosis-agent/ehr_diagnosis_agent/.cache/env_val1_cache_mistral_2
+  # val2_cache_path: /PHShome/dzm44/code/ehr-diagnosis-agent/ehr_diagnosis_agent/.cache/env_val2_cache_mistral_2
+  # test_cache_path: /PHShome/dzm44/code/ehr-diagnosis-agent/ehr_diagnosis_agent/.cache/env_test_cache_mistral_2
   reward_type: 'continuous_independent'
-  # reward_type: 'continuous_dependent'
-  num_future_diagnoses_threshold: 0
-  true_positive_minimum: 0
-  train_cache_path: /work/frink/mcinerney.de/ehr-diagnosis-agent/ehr_diagnosis_agent/.cache/env_train_cache_flan
-  val1_cache_path: /work/frink/mcinerney.de/ehr-diagnosis-agent/ehr_diagnosis_agent/.cache/env_val1_cache_flan
-  val2_cache_path: /work/frink/mcinerney.de/ehr-diagnosis-agent/ehr_diagnosis_agent/.cache/env_val2_cache_flan
-  test_cache_path: /work/frink/mcinerney.de/ehr-diagnosis-agent/ehr_diagnosis_agent/.cache/env_test_cache_flan
-  top_k_evidence: 100
-  add_risk_factor_queries: false
-  # add_risk_factor_queries: true
-  # limit_options_with_llm: false
-  limit_options_with_llm: true
-  add_none_of_the_above_option: false
-  use_confident_diagnosis_mapping: false
-  skip_instances_with_gt_n_reports: 200
+  other_args:
+    top_k_evidence: 3
+    num_future_diagnoses_threshold: 0
+    match_confident_diagnoses: false
+    match_potential_diagnoses: false
+    true_positive_minimum: 0
+    add_risk_factor_queries: false
+    limit_options_with_llm: true
+    use_confident_diagnosis_mapping: false
+    stop_after_first_target: false
+    skip_instances_with_gt_n_reports: 200
+    add_diagnosis_options_from_caches:
+      - /PHShome/dzm44/code/ehr-diagnosis-agent/ehr_diagnosis_agent/.cache/env_train_cache_flan_2
+    added_diagnosis_options_threshold: 10
+    limit_evidence_updates_to_k_reports: 1
 actor:
   # type: normal
   # type: dirichlet
   # type: beta
   type: delta
   shared_params:
-    # static_diagnoses: null
-    static_diagnoses:
-      - cancer (diagnosis)
-      - pneumonia (diagnosis)
-      - pulmonary edema (diagnosis)
+    static_diagnoses: null
+    # static_diagnoses:
+    #   - cancer (diagnosis)
+    #   - pneumonia (diagnosis)
+    #   - pulmonary edema (diagnosis)
     static_bias_params: null
-    train_static_bias_params: # for training
-      - [-1.4396936453085785]
-      - [-0.5889434030299426]
-      - [-0.05625351040116628]
-    eval_static_bias_params: # for inference
-      - [-2.642675509576076]
-      - [-1.9572920156106348]
-      - [-1.5961686236710402]
+    train_static_bias_params: null
+    # train_static_bias_params: # for training
+    #   - [-1.4396936453085785]
+    #   - [-0.5889434030299426]
+    #   - [-0.05625351040116628]
+    eval_static_bias_params: null
+    # eval_static_bias_params: # for inference
+    #   - [-2.642675509576076]
+    #   - [-1.9572920156106348]
+    #   - [-1.5961686236710402]
     embedder_type: interpretable
     # embedder_type: bert
-    model_name: emilyalsentzer/Bio_ClinicalBERT
+    # model_name: emilyalsentzer/Bio_ClinicalBERT
+    model_name: /PHShome/dzm44/models/Bio_ClinicalBERT
     # model_name: roberta-base
     diagnosis_bias: true
     use_attn: false
@@ -171,7 +198,8 @@ critic:
   #   - pulmonary edema
   embedder_type: interpretable
   # embedder_type: bert
-  model_name: emilyalsentzer/Bio_ClinicalBERT
+  # model_name: emilyalsentzer/Bio_ClinicalBERT
+  model_name: /PHShome/dzm44/models/Bio_ClinicalBERT
   diagnosis_bias: true
   # model_name: roberta-base
   embedding_batch_size: 8 #32

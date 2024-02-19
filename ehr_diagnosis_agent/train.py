@@ -63,33 +63,22 @@ def main():
     else:
         with open(args.training.train_subset_file, 'rb') as f:
             train_subset = pkl.load(f)
-    train_env: EHRDiagnosisEnv = gymnasium.make(
-        'ehr_diagnosis_env/EHRDiagnosisEnv-v0',
+    train_env_args = dict(**args.env['other_args'])
+    train_env_args.update(
         instances=train_df,
         cache_path=args.env.train_cache_path,
         llm_name_or_interface=llm_interface,
         fmm_name_or_interface=fmm_interface,
-        reward_type=args.env.reward_type,
-        num_future_diagnoses_threshold=args.env.num_future_diagnoses_threshold,
         progress_bar=lambda *a, **kwa: tqdm(*a, **kwa, leave=False),
-        top_k_evidence=args.env.top_k_evidence,
+        reward_type=args.env.reward_type,
         verbosity=1, # don't print anything when an environment is dead
-        add_risk_factor_queries=args.env.add_risk_factor_queries,
-        limit_options_with_llm=args.env.limit_options_with_llm,
-        add_none_of_the_above_option=args.env.add_none_of_the_above_option,
-        true_positive_minimum=args.env.true_positive_minimum,
-        use_confident_diagnosis_mapping=
-            args.env.use_confident_diagnosis_mapping,
-        skip_instances_with_gt_n_reports=
-            args.env.skip_instances_with_gt_n_reports,
         subset=train_subset,
+    )
+    train_env: EHRDiagnosisEnv = gymnasium.make(
+        'ehr_diagnosis_env/' + args.env['env_type'],
+        **train_env_args,
     ) # type: ignore
     if args.training.val_every is not None:
-        if args.training.val_subset_file is None:
-            val_subset = None
-        else:
-            with open(args.training.val_subset_file, 'rb') as f:
-                val_subset = pkl.load(f)
         print('loading validation dataset...')
         val_df = pd.read_csv(os.path.join(
             args.data.path, args.data.dataset, 'val1.data'), compression='gzip')
@@ -98,27 +87,25 @@ def main():
             # truncate to first instances because data indices have to be
             # maintained to use the cache
             val_df = val_df[:args.training.limit_val_size]
-        val_env: EHRDiagnosisEnv | None = gymnasium.make(
-            'ehr_diagnosis_env/EHRDiagnosisEnv-v0',
+        if args.training.val_subset_file is None:
+            val_subset = None
+        else:
+            with open(args.training.val_subset_file, 'rb') as f:
+                val_subset = pkl.load(f)
+        val_env_args = dict(**args.env['other_args'])
+        val_env_args.update(
             instances=val_df,
             cache_path=args.env.val1_cache_path,
             llm_name_or_interface=llm_interface,
             fmm_name_or_interface=fmm_interface,
-            reward_type=args.env.reward_type,
-            num_future_diagnoses_threshold=
-                args.env.num_future_diagnoses_threshold,
             progress_bar=lambda *a, **kwa: tqdm(*a, **kwa, leave=False),
-            top_k_evidence=args.env.top_k_evidence,
+            reward_type=args.env.reward_type,
             verbosity=1, # don't print anything when an environment is dead
-            add_risk_factor_queries=args.env.add_risk_factor_queries,
-            limit_options_with_llm=args.env.limit_options_with_llm,
-            add_none_of_the_above_option=args.env.add_none_of_the_above_option,
-            true_positive_minimum=args.env.true_positive_minimum,
-            use_confident_diagnosis_mapping=
-                args.env.use_confident_diagnosis_mapping,
-            skip_instances_with_gt_n_reports=
-                args.env.skip_instances_with_gt_n_reports,
             subset=val_subset,
+        )
+        val_env: EHRDiagnosisEnv = gymnasium.make(
+            'ehr_diagnosis_env/' + args.env['env_type'],
+            **val_env_args,
         ) # type: ignore
     else:
         val_env = None
@@ -130,7 +117,7 @@ def main():
     actor_params.update(args.actor['shared_params'])
     actor_params['static_bias_params'] = actor_params['train_static_bias_params']
     actor = actor_types[args.actor.type](actor_params)
-    actor.set_device('cuda')
+    actor.set_device(args.device)
     if actor.has_bias and actor.config.static_diagnoses is not None:
         actor_params = [
             {'params': [v for k, v in actor.named_parameters()
@@ -169,9 +156,9 @@ def main():
             critic_scheduler.load_state_dict(ckpt['critic_scheduler'])
         seed_offset = ckpt['seed_offset']
         del ckpt
-        if args.training.clear_gpu: # only used for debugging
-            gc.collect()
-            torch.cuda.empty_cache()
+        # if args.training.clear_gpu: # only used for debugging
+        #     gc.collect()
+        #     torch.cuda.empty_cache()
     with warnings.catch_warnings():
         actor_scheduler.step()
         if critic_scheduler is not None:
@@ -187,10 +174,10 @@ def main():
     for epoch in trange(args.training.num_epochs, desc='epochs'):
         if critic is not None:
             critic.set_device('cpu')
-            if args.training.clear_gpu: # only used for debugging
-                gc.collect()
-                torch.cuda.empty_cache()
-        train_env.to('cuda') # train and val envs have connected models
+            # if args.training.clear_gpu: # only used for debugging
+            #     gc.collect()
+            #     torch.cuda.empty_cache()
+        train_env.to(args.device) # train and val envs have connected models
         # Note: all the evaluation and trajectory collecting functions control
         #   their random seeds
         if val_env is not None and epoch % args.training.val_every == 0:
@@ -204,11 +191,13 @@ def main():
                 max_num_episodes=args.training.val_max_num_episodes,
                 max_trajectory_length=args.training.val_max_trajectory_length,
                 custom_policy=CustomPolicy(
-                    args.training.eval_random_query_policy,
-                    args.training.eval_random_rp_policy),
+                    args.training.eval_query_policy,
+                    args.training.eval_rp_policy),
                 filename=results_file,
                 use_random_start_idx=
-                    args.training.eval_val_use_random_start_idx)
+                    args.training.eval_val_use_random_start_idx,
+                max_observed_reports=
+                    args.training.eval_val_max_observed_reports,)
             wandb.log({
                 'epoch': epoch,
                 'updates': updates,
@@ -226,11 +215,13 @@ def main():
                 max_trajectory_length=
                     args.training.trainmetrics_max_trajectory_length,
                 custom_policy=CustomPolicy(
-                    args.training.eval_random_query_policy,
-                    args.training.eval_random_rp_policy),
+                    args.training.eval_query_policy,
+                    args.training.eval_rp_policy),
                 filename=results_file,
                 use_random_start_idx=
-                    args.training.eval_train_use_random_start_idx)
+                    args.training.eval_train_use_random_start_idx,
+                max_observed_reports=
+                    args.training.eval_train_max_observed_reports,)
             wandb.log({
                 'epoch': epoch,
                 'updates': updates,
@@ -243,11 +234,13 @@ def main():
                 args, train_env, options, actor, epoch, seed_offset,
                 dataset_iterations, dataset_progress,
                 custom_policy=CustomPolicy(
-                    args.training.random_query_policy,
-                    args.training.random_rp_policy))
+                    args.training.query_policy,
+                    args.training.rp_policy))
+        dataset_progress.set_description(
+            'dataset progress (iteration {})'.format(dataset_iterations))
         train_env.to('cpu')
         if critic is not None:
-            critic.set_device('cuda')
+            critic.set_device(args.device)
         if args.training.freeze_actor is not None:
             if isinstance(args.training.freeze_actor, str):
                 freeze_actor_mode = args.training.freeze_actor
@@ -291,9 +284,9 @@ def main():
                 })
             ckpt['seed_offset'] = seed_offset
             torch.save(ckpt, file)
-        if args.training.clear_gpu: # only used for debugging
-            gc.collect()
-            torch.cuda.empty_cache()
+        # if args.training.clear_gpu: # only used for debugging
+        #     gc.collect()
+        #     torch.cuda.empty_cache()
 
 
 if __name__ == '__main__':

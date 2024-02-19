@@ -10,9 +10,10 @@ from models.actor import InterpretableNormalActor, \
     InterpretableDirichletActor, InterpretableBetaActor, InterpretableDeltaActor
 import torch
 from tqdm import trange, tqdm
-from utils import CustomPolicy, reset_at_random_idx
+from utils import CustomPolicy, fast_forward_to_random_idx
 import gc
 import io
+import numpy as np
 
 
 actor_types = {
@@ -87,8 +88,8 @@ def get_prediction_rows(
     action_det = actor.get_mean([dist])[0]
     sorted_option_targets_deterministic = sort_by_scores(
         option_targets, action_det)
-    targets = info['current_targets'] if all_targets is None else \
-        all_targets
+    targets = set(option_targets).union(info['current_targets']) \
+        if all_targets is None else all_targets
     for target in targets:
         action_target_score = 0
         action_target_score_deterministic = 0
@@ -100,7 +101,7 @@ def get_prediction_rows(
             'time_step': timestep,
             'target': target,
             'time_to_target': info['target_countdown'][target] \
-                if target in info['current_targets'] else None,
+                if target in info['current_targets'] else np.nan,
             'is_positive': target in option_targets,
             'is_current_target': target in info['current_targets'],
             'action_target_score': action_target_score,
@@ -160,7 +161,7 @@ def episode_to_df(
                 next_info, top_ks=top_ks, all_targets=all_targets)
             if 'num_evidence' in action_info.keys() and \
                     isinstance(actor, InterpretableDeltaActor) and \
-                    actor.attention is None:
+                    actor.attention is None and not prediction_df.empty:
                 for k in top_k_evidence:
                     vote_info_temp, param_info_temp = \
                         get_top_k_evidence_param_info(
@@ -194,7 +195,7 @@ def episode_to_df(
 def evaluate_on_environment(
         env, actor, options=None, max_num_episodes=None,
         max_trajectory_length=None, custom_policy=None, filename=None,
-        use_random_start_idx=False, seed_offset=0):
+        use_random_start_idx=False, seed_offset=0, max_observed_reports=None):
     actor.eval()
     if filename is not None:
         evidence_filename = filename.replace('.csv', '_evidence.csv')
@@ -221,13 +222,17 @@ def evaluate_on_environment(
             if not info['is_valid_timestep']:
                 continue
             if use_random_start_idx:
-                obs, info = reset_at_random_idx(
-                    env, info, seed=episode + seed_offset, options=options)
+                # obs, info = reset_at_random_idx(
+                #     env, info, seed=episode + seed_offset, options=options)
+                obs, info = fast_forward_to_random_idx(
+                    env, obs, info, seed=episode + seed_offset,
+                    max_observed_reports=max_observed_reports)
             replay_buffer = ReplayBuffer()
             assert collect_episode(
                 env, actor, replay_buffer, obs, info,
                 max_trajectory_length=max_trajectory_length,
-                custom_policy=custom_policy)
+                custom_policy=custom_policy,
+                max_observed_reports=max_observed_reports)
             evidence_df, steps_df, episode_row = episode_to_df(
                 env, actor, replay_buffer,
                 all_targets=env.all_reference_diagnoses)
@@ -275,25 +280,19 @@ def main():
         # maintained to use the cache
         print(f'truncating to first {args.eval.limit_eval_size}')
         eval_df = eval_df[:args.eval.limit_eval_size]
-    env: EHRDiagnosisEnv = gymnasium.make(
-        'ehr_diagnosis_env/EHRDiagnosisEnv-v0',
+    env_args = dict(**args.env['other_args'])
+    env_args.update(
         instances=eval_df,
         cache_path=args.env[f'{args.eval.split}_cache_path'],
         llm_name_or_interface=args.env.llm_name,
         fmm_name_or_interface=args.env.fmm_name,
-        reward_type=args.env.reward_type,
-        num_future_diagnoses_threshold=args.env.num_future_diagnoses_threshold,
         progress_bar=lambda *a, **kwa: tqdm(*a, **kwa, leave=False),
-        top_k_evidence=args.env.top_k_evidence,
+        reward_type=args.env.reware_type,
         verbosity=1, # don't print anything when an environment is dead
-        add_risk_factor_queries=args.env.add_risk_factor_queries,
-        limit_options_with_llm=args.env.limit_options_with_llm,
-        add_none_of_the_above_option=args.env.add_none_of_the_above_option,
-        true_positive_minimum=args.env.true_positive_minimum,
-        use_confident_diagnosis_mapping=
-            args.env.use_confident_diagnosis_mapping,
-        skip_instances_with_gt_n_reports=
-            args.env.skip_instances_with_gt_n_reports,
+    )
+    env: EHRDiagnosisEnv = gymnasium.make(
+        'ehr_diagnosis_env/' + args.env['env_type'],
+        **env_args,
     ) # type: ignore
     if args.env.reward_type not in recommended_reward_types[args.actor.type]:
         warnings.warn(
@@ -323,11 +322,12 @@ def main():
         max_num_episodes=args.eval.max_num_episodes,
         max_trajectory_length=args.eval.max_trajectory_length,
         custom_policy=CustomPolicy(
-            args.eval.random_query_policy,
-            args.eval.random_rp_policy),
+            args.eval.query_policy,
+            args.eval.rp_policy),
         filename=os.path.join(path, filename),
         use_random_start_idx=args.eval.use_random_start_idx,
-        seed_offset=args.eval.seed_offset)
+        seed_offset=args.eval.seed_offset,
+        max_observed_reports=args.eval.max_observed_reports)
 
 
 if __name__ == '__main__':

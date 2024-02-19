@@ -6,6 +6,7 @@ import pandas as pd
 import os
 from tqdm import trange, tqdm
 import pickle as pkl
+import numpy as np
 
 
 def main():
@@ -20,26 +21,20 @@ def main():
             subset = pkl.load(f)
     else:
         subset = None
-    env: EHRDiagnosisEnv = gymnasium.make(
-        'ehr_diagnosis_env/EHRDiagnosisEnv-v0',
+    env_args = dict(**args.env['other_args'])
+    env_args.update(
         instances=df,
         cache_path=args.write_to_cache.cache_dir,
         llm_name_or_interface=args.env.llm_name,
         fmm_name_or_interface=args.env.fmm_name,
-        reward_type=args.env.reward_type,
-        num_future_diagnoses_threshold=args.env.num_future_diagnoses_threshold,
         progress_bar=lambda *a, **kwa: tqdm(*a, **kwa, leave=False),
-        top_k_evidence=args.env.top_k_evidence,
+        reward_type=args.env.reward_type,
         verbosity=1, # don't print anything when an environment is dead
-        add_risk_factor_queries=args.env.add_risk_factor_queries,
-        limit_options_with_llm=args.env.limit_options_with_llm,
-        add_none_of_the_above_option=args.env.add_none_of_the_above_option,
-        true_positive_minimum=args.env.true_positive_minimum,
-        use_confident_diagnosis_mapping=
-            args.env.use_confident_diagnosis_mapping,
-        skip_instances_with_gt_n_reports=
-            args.env.skip_instances_with_gt_n_reports,
         subset=subset,
+    )
+    env: EHRDiagnosisEnv = gymnasium.make(
+        'ehr_diagnosis_env/' + args.env['env_type'],
+        **env_args,
     ) # type: ignore
     options = {}
     if args.data.max_reports_considered is not None:
@@ -64,9 +59,16 @@ def main():
             # this writes queries to cache, which is helpful if a lot or
             # all of the queries are the same between different episodes
             terminated, truncated = not info['is_valid_timestep'], False
+            step = 0
             while not (truncated or terminated):
-                _, _, terminated, truncated, _ = env.step(
-                    env.action_space.sample())
+                action = np.zeros_like(env.action_space.sample())
+                _, _, terminated, truncated, info = env.step(action)
+                step += 1
+                max_observed_reports = args.write_to_cache[
+                    'max_observed_reports']
+                if max_observed_reports is not None and \
+                        info['current_report'] + 1 >= max_observed_reports:
+                    break
         pbar.set_postfix({
             'valid_instances': valid_count,
             'percentage_valid': valid_count / all_count

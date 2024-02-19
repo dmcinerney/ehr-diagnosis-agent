@@ -9,6 +9,7 @@ import io
 from torch import nn
 from sklearn.metrics import roc_auc_score
 import os
+import numpy as np
 
 
 def get_args(config_file):
@@ -18,17 +19,27 @@ def get_args(config_file):
 
 
 class CustomPolicy:
-    def __init__(self, random_query_policy, random_rp_policy):
-        self.random_query_policy = random_query_policy
-        self.random_rp_policy = random_rp_policy
+    def __init__(self, query_policy, rp_policy):
+        self.query_policy = query_policy
+        self.rp_policy = rp_policy
     def __call__(self, actor, obs, env):
         device = next(iter(actor.parameters())).device
-        if self.random_query_policy and not obs['evidence_is_retrieved']:
-            return torch.tensor(env.action_space.sample(), device=device), \
-                torch.tensor(0, device=device), {}
-        if self.random_rp_policy and obs['evidence_is_retrieved']:
-            return torch.tensor(env.action_space.sample(), device=device), \
-                torch.tensor(0, device=device), {}
+        if not obs['evidence_is_retrieved']:
+            if self.query_policy == 'random':
+                return torch.tensor(env.action_space.sample(), device=device), \
+                    torch.tensor(0, device=device), {}
+            elif self.query_policy == 'zeros':
+                return torch.tensor(
+                    np.zeros_like(env.action_space.sample()), device=device), \
+                    torch.tensor(0, device=device), {}
+        else:
+            if self.rp_policy == 'random':
+                return torch.tensor(env.action_space.sample(), device=device), \
+                    torch.tensor(0, device=device), {}
+            elif self.rp_policy == 'zeros':
+                return torch.tensor(
+                    np.zeros_like(env.action_space.sample()), device=device), \
+                    torch.tensor(0, device=device), {}
         return sample_actor_policy(actor, obs, env)
 
 
@@ -44,7 +55,7 @@ def sample_actor_policy(actor, obs, env):
 
 def collect_episode(
         env, actor, replay_buffer, obs, info, max_trajectory_length=None,
-        custom_policy=None):
+        custom_policy=None, max_observed_reports=None):
     # Collect the episode trajectory given a starting state/environment.
     # If the starting state/environment is valid, return True and add
     # trajectory to the buffer, otherwise return False.
@@ -65,6 +76,9 @@ def collect_episode(
         info = next_info
         t += 1
         if max_trajectory_length is not None and t >= max_trajectory_length:
+            break
+        if max_observed_reports is not None and \
+                info['current_report'] >= max_observed_reports:
             break
     return True
 
@@ -88,18 +102,39 @@ def reset_env_train(
     return obs, info, dataset_iterations
 
 
-def reset_at_random_idx(env, info, seed=None, options=None):
+# def reset_at_random_idx(
+#         env, info, seed=None, options=None, max_observed_reports=None):
+#     if seed is not None:
+#         random.seed(seed)
+#     max_step = info['current_report'] + info['max_timesteps'] // 2 - 1
+#     if max_observed_reports is not None:
+#         max_step = min(max_step, max_observed_reports - 1)
+#     new_starting_index = random.randint(info['current_report'], max_step)
+#     new_options = {
+#         'start_report_index': new_starting_index,
+#         'instance_index': info['instance_index'],
+#     }
+#     if options is not None:
+#         new_options.update(options)
+#     return env.reset(seed=seed, options=new_options)
+
+
+def fast_forward_to_random_idx(
+        env, obs, info, seed=None, max_observed_reports=None):
     if seed is not None:
         random.seed(seed)
-    new_options = {
-        'start_report_index': random.randint(
-            info['current_report'],
-            info['current_report'] + info['max_timesteps'] // 2 - 1),
-        'instance_index': info['instance_index'],
-    }
-    if options is not None:
-        new_options.update(options)
-    return env.reset(seed=seed, options=new_options)
+    max_reports_left = info['max_timesteps'] // 2 - 1
+    if max_observed_reports is not None:
+        max_reports_left = min(
+            max_reports_left,
+            max_observed_reports - 1 - info['current_report'])
+    num_steps = random.randint(0, max_reports_left)
+    for i in range(num_steps):
+        obs, _, _, _, info = env.step(
+            np.zeros_like(env.action_space.sample()))
+        obs, _, _, _, info = env.step(
+            np.zeros_like(env.action_space.sample()))
+    return obs, info
 
 
 def collect_trajectories_train(
@@ -121,13 +156,17 @@ def collect_trajectories_train(
                     train_env, epoch * episode + seed_offset, options,
                     dataset_iterations, dataset_progress, epoch)
             if args.training.use_random_start_idx:
-                obs, info = reset_at_random_idx(
-                    train_env, info, seed=epoch * episode + seed_offset,
-                    options=options)
+                # obs, info = reset_at_random_idx(
+                #     train_env, info, seed=epoch * episode + seed_offset,
+                #     options=options)
+                obs, info = fast_forward_to_random_idx(
+                    train_env, obs, info, seed=epoch * episode + seed_offset,
+                    max_observed_reports=args.training.max_observed_reports)
             assert collect_episode(
                 train_env, actor, replay_buffer, obs, info,
                 max_trajectory_length=args.training.max_trajectory_length,
-                custom_policy=custom_policy)
+                custom_policy=custom_policy,
+                max_observed_reports=args.training.max_observed_reports)
             if log:
                 wandb.log({
                     'epoch': epoch,
@@ -301,24 +340,36 @@ def log_results(reward_type, results, split, actor=None, suffix=''):
         # return_dict[f'{split}_bce_loss'] = -torch.nn.functional.logsigmoid(torch.tensor(
         #     results.apply(lambda r: r.action_target_score_deterministic if r.is_current_target else -r.action_target_score_deterministic, axis=1).to_numpy(),
         #     dtype=torch.float)).mean()
-        return_dict[f'{split}_bce_loss_micro'] = nn.BCEWithLogitsLoss()(
-            torch.tensor(results['action_target_score_deterministic' + suffix].to_numpy(), dtype=torch.float),
-            torch.tensor(results.is_current_target.to_numpy(), dtype=torch.float)).item()
+        try: #TODO: figure out the bugs with bce loss?
+            return_dict[f'{split}_bce_loss_micro'] = nn.BCEWithLogitsLoss()(
+                torch.tensor(results['action_target_score_deterministic' + suffix].to_numpy(), dtype=torch.float),
+                torch.tensor(results.is_current_target.to_numpy(), dtype=torch.float)).item()
+        except Exception as e:
+            print(e)
+            print(results.is_current_target.to_numpy())
+            import pdb; pdb.set_trace()
+        import pdb; pdb.set_trace()
         if len(set(results.is_current_target)) > 1:
             return_dict[f'{split}_auroc_micro'] = roc_auc_score(
                 results.is_current_target.to_numpy(),
                 results['action_target_score_deterministic' + suffix].to_numpy())
         for target in targets:
             results_temp = results[results.target==target]
-            return_dict[f'{target}/{split}_bce_loss'] = nn.BCEWithLogitsLoss()(
-                torch.tensor(results_temp['action_target_score_deterministic' + suffix].to_numpy(), dtype=torch.float),
-                torch.tensor(results_temp.is_current_target.to_numpy(), dtype=torch.float)).item()
+            try:
+                return_dict[f'{target}/{split}_bce_loss'] = nn.BCEWithLogitsLoss()(
+                    torch.tensor(results_temp['action_target_score_deterministic' + suffix].to_numpy(), dtype=torch.float),
+                    torch.tensor(results_temp.is_current_target.to_numpy(), dtype=torch.float)).item()
+            except Exception as e:
+                pass
             if len(set(results.is_current_target)) > 1:
                 return_dict[f'{target}/{split}_auroc'] = roc_auc_score(
                     results_temp.is_current_target.to_numpy(),
                     results_temp['action_target_score_deterministic' + suffix].to_numpy())
-        return_dict[f'{split}_bce_loss_macro'] = sum(
-            [return_dict[f'{target}/{split}_bce_loss'] for target in targets]) / len(targets)
+        try:
+            return_dict[f'{split}_bce_loss_macro'] = sum(
+                [return_dict[f'{target}/{split}_bce_loss'] for target in targets]) / len(targets)
+        except Exception as e:
+            pass
         if len(set(results.is_current_target)) > 1:
             return_dict[f'{split}_auroc_macro'] = sum(
                 [return_dict[f'{target}/{split}_auroc'] for target in targets]) / len(targets)

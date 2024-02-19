@@ -2,7 +2,7 @@
 #SBATCH --partition=gpu
 #SBATCH --gres=gpu:v100-sxm2:1
 #SBATCH --time=8:00:00
-source activate /work/frink/mcinerney.de/envs/ehragent
+# source activate /work/frink/mcinerney.de/envs/ehragent
 all_sentences="/scratch/mcinerney.de/ehr-diagnosis-agent-output/wandb/run-20230925_104538-57jsyt8v/files/ckpt_epoch=145_updates=1160.pt"
 llm_evidence="/scratch/mcinerney.de/ehr-diagnosis-agent-output/wandb/run-20230927_194029-jhtf7taf/files/ckpt_epoch=95_updates=679.pt"
 llm_evidence_bert_predictor="/scratch/mcinerney.de/ehr-diagnosis-agent-output/wandb/run-20231129_201913-pmgcy2p1/files/ckpt_epoch=150_updates=1200.pt"

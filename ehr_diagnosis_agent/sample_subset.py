@@ -17,24 +17,20 @@ def main():
         args.data.path, args.data.dataset,
         f'{args.sample_subset.split}.data'), compression='gzip')
     print(f'length={len(df)}')
-    env: EHRDiagnosisEnv = gymnasium.make(
-        'ehr_diagnosis_env/EHRDiagnosisEnv-v0',
-        instances=df,
-        cache_path=args.env[f'{args.sample_subset.split}_cache_path'],
+        env_args = dict(**args.env['other_args'])
+    env_args.update(
+        instances=eval_df,
+        cache_path=args.env[f'{args.eval.split}_cache_path'],
         llm_name_or_interface=None,
         fmm_name_or_interface=None,
         fuzzy_matching_threshold=None,
-        reward_type=args.env.reward_type,
-        num_future_diagnoses_threshold=args.env.num_future_diagnoses_threshold,
         progress_bar=lambda *a, **kwa: tqdm(*a, **kwa, leave=False),
-        top_k_evidence=args.env.top_k_evidence,
+        reward_type=args.env.reware_type,
         verbosity=1, # don't print anything when an environment is dead
-        add_risk_factor_queries=args.env.add_risk_factor_queries,
-        limit_options_with_llm=args.env.limit_options_with_llm,
-        add_none_of_the_above_option=args.env.add_none_of_the_above_option,
-        true_positive_minimum=args.env.true_positive_minimum,
-        use_confident_diagnosis_mapping=
-            args.env.use_confident_diagnosis_mapping,
+    )
+    env: EHRDiagnosisEnv = gymnasium.make(
+        'ehr_diagnosis_env/' + args.env['env_type'],
+        **env_args,
     ) # type: ignore
     instances = env.get_cached_instance_dataframe()
     instances = pd.concat([df, instances], axis=1)

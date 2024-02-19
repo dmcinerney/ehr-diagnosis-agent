@@ -53,30 +53,24 @@ def main():
     fmm_interface = SentenceTransformer(args.env.fmm_name) \
         if args.env.fmm_name is not None else None
     if args.training.train_subset_file is None:
-        subset = None
+        train_subset = None
     else:
         with open(args.training.train_subset_file, 'rb') as f:
-            subset = pkl.load(f)
-    train_env: EHRDiagnosisEnv = gymnasium.make(
-        'ehr_diagnosis_env/EHRDiagnosisEnv-v0',
+            train_subset = pkl.load(f)
+    train_env_args = dict(**args.env['other_args'])
+    train_env_args.update(
         instances=train_df,
         cache_path=args.env.train_cache_path,
         llm_name_or_interface=llm_interface,
         fmm_name_or_interface=fmm_interface,
-        reward_type=args.env.reward_type,
-        num_future_diagnoses_threshold=args.env.num_future_diagnoses_threshold,
         progress_bar=lambda *a, **kwa: tqdm(*a, **kwa, leave=False),
-        top_k_evidence=args.env.top_k_evidence,
+        reward_type=args.env.reward_type,
         verbosity=1, # don't print anything when an environment is dead
-        add_risk_factor_queries=args.env.add_risk_factor_queries,
-        limit_options_with_llm=args.env.limit_options_with_llm,
-        add_none_of_the_above_option=args.env.add_none_of_the_above_option,
-        true_positive_minimum=args.env.true_positive_minimum,
-        use_confident_diagnosis_mapping=
-            args.env.use_confident_diagnosis_mapping,
-        skip_instances_with_gt_n_reports=
-            args.env.skip_instances_with_gt_n_reports,
-        subset=subset,
+        subset=train_subset,
+    )
+    train_env: EHRDiagnosisEnv = gymnasium.make(
+        'ehr_diagnosis_env/' + args.env['env_type'],
+        **train_env_args,
     ) # type: ignore
     if args.training.val_every is not None:
         print('loading validation dataset...')
@@ -87,26 +81,25 @@ def main():
             # truncate to first instances because data indices have to be
             # maintained to use the cache
             val_df = val_df[:args.training.limit_val_size]
-        val_env: EHRDiagnosisEnv | None = gymnasium.make(
-            'ehr_diagnosis_env/EHRDiagnosisEnv-v0',
+        if args.training.val_subset_file is None:
+            val_subset = None
+        else:
+            with open(args.training.val_subset_file, 'rb') as f:
+                val_subset = pkl.load(f)
+        val_env_args = dict(**args.env['other_args'])
+        val_env_args.update(
             instances=val_df,
             cache_path=args.env.val1_cache_path,
             llm_name_or_interface=llm_interface,
             fmm_name_or_interface=fmm_interface,
-            reward_type=args.env.reward_type,
-            num_future_diagnoses_threshold=
-                args.env.num_future_diagnoses_threshold,
             progress_bar=lambda *a, **kwa: tqdm(*a, **kwa, leave=False),
-            top_k_evidence=args.env.top_k_evidence,
+            reward_type=args.env.reward_type,
             verbosity=1, # don't print anything when an environment is dead
-            add_risk_factor_queries=args.env.add_risk_factor_queries,
-            limit_options_with_llm=args.env.limit_options_with_llm,
-            add_none_of_the_above_option=args.env.add_none_of_the_above_option,
-            true_positive_minimum=args.env.true_positive_minimum,
-            use_confident_diagnosis_mapping=
-                args.env.use_confident_diagnosis_mapping,
-            skip_instances_with_gt_n_reports=
-                args.env.skip_instances_with_gt_n_reports,
+            subset=val_subset,
+        )
+        val_env: EHRDiagnosisEnv = gymnasium.make(
+            'ehr_diagnosis_env/' + args.env['env_type'],
+            **val_env_args,
         ) # type: ignore
     else:
         val_env = None
@@ -117,7 +110,7 @@ def main():
     actor_params = args.actor['{}_params'.format(args.actor.type)]
     actor_params.update(args.actor['shared_params'])
     actor = actor_types[args.actor.type](actor_params)
-    actor.set_device('cuda')
+    actor.set_device(args.device)
     if args.training.objective_optimization in [
             'ppo_dae', 'ppo_gae', 'mix_objectives']:
         critic = Critic(args.critic)
@@ -149,43 +142,47 @@ def main():
             critic.load_state_dict(ckpt['critic'])
         seed_offset = ckpt['seed_offset']
         del ckpt
-        if args.training.clear_gpu: # only used for debugging
-            gc.collect()
-            torch.cuda.empty_cache()
+        # if args.training.clear_gpu: # only used for debugging
+        #     gc.collect()
+        #     torch.cuda.empty_cache()
         if critic is not None:
             critic.set_device('cpu')
-            if args.training.clear_gpu: # only used for debugging
-                gc.collect()
-                torch.cuda.empty_cache()
-        train_env.to('cuda') # train and val envs have connected models
+            # if args.training.clear_gpu: # only used for debugging
+            #     gc.collect()
+            #     torch.cuda.empty_cache()
+        train_env.to(args.device) # train and val envs have connected models
         # Note: all the evaluation and trajectory collecting functions control
         #   their random seeds
         # validate current model
         results_file = os.path.join(
             args.redo_train_evals, 'val_metrics_{}.csv'.format(ckpt_file[:-3]))
-        step_results, episode_results = evaluate_on_environment(
+        evidence_results, step_results, episode_results = evaluate_on_environment(
             val_env, actor, options=options,
             max_num_episodes=args.training.val_max_num_episodes,
             max_trajectory_length=args.training.val_max_trajectory_length,
             custom_policy=CustomPolicy(
-                args.training.eval_random_query_policy,
-                args.training.eval_random_rp_policy),
+                args.training.eval_query_policy,
+                args.training.eval_rp_policy),
             filename=results_file,
             use_random_start_idx=
-                args.training.eval_val_use_random_start_idx)
+                args.training.eval_val_use_random_start_idx,
+            max_observed_reports=
+                args.training.eval_val_max_observed_reports,)
         results_file = os.path.join(
             args.redo_train_evals, 'train_metrics_{}.csv'.format(ckpt_file[:-3]))
-        step_results, episode_results = evaluate_on_environment(
+        evidence_results, step_results, episode_results = evaluate_on_environment(
             train_env, actor, options=dict(add_to_seen=False, **options),
             max_num_episodes=args.training.trainmetrics_max_num_episodes,
             max_trajectory_length=
                 args.training.trainmetrics_max_trajectory_length,
             custom_policy=CustomPolicy(
-                args.training.eval_random_query_policy,
-                args.training.eval_random_rp_policy),
+                args.training.eval_query_policy,
+                args.training.eval_rp_policy),
             filename=results_file,
             use_random_start_idx=
-                args.training.eval_train_use_random_start_idx)
+                args.training.eval_train_use_random_start_idx,
+            max_observed_reports=
+                args.training.eval_train_max_observed_reports,)
 
 
 if __name__ == '__main__':
